@@ -1,0 +1,1 @@
+export function validateSkillManifest(value){for(const field of ['id','version','kind'])if(!value?.[field])throw new Error(`Missing ${field}`);if(value.permissions?.executeScripts!==true&&value.scripts?.length)throw new Error('Scripts require executeScripts permission');return value}

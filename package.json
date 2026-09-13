@@ -1,0 +1,1 @@
+{"name":"yingzhang","private":true,"workspaces":["apps/web","packages/*"],"scripts":{"dev":"npm --workspace @yingzhang/web run dev","build":"npm --workspace @yingzhang/web run build","test:web":"npm --workspace @yingzhang/web run test","test:engine":"npm --workspace @yingzhang/presentation-engine run test"}}

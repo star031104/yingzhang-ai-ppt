@@ -1,0 +1,1 @@
+{"name":"@yingzhang/presentation-engine","version":"0.1.0","type":"module","scripts":{"test":"node --test test/*.test.mjs"},"dependencies":{"playwright":"^1.54.0","pptxgenjs":"^4.0.1"},"devDependencies":{"jszip":"^3.10.1"}}

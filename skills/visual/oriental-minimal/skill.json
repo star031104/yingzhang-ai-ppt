@@ -1,0 +1,14 @@
+{
+  "id": "oriental-minimal",
+  "version": "1.0.0",
+  "kind": "visual",
+  "name": "东方留白 · 雅致表达",
+  "description": "墨色、米白与少量金红建立克制的东方秩序，适合文化、教育、品牌与公开演讲。",
+  "entrypoint": "SKILL.md",
+  "permissions": {"executeScripts": false},
+  "communitySource": {
+    "inspiredBy": ["Akxan/ppt-agent-skill"],
+    "license": "repository terms",
+    "adaptation": "仅提炼视觉规则，不执行社区脚本或工作流"
+  }
+}

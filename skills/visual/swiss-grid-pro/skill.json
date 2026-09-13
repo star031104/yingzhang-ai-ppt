@@ -1,0 +1,14 @@
+{
+  "id": "swiss-grid-pro",
+  "version": "1.0.0",
+  "kind": "visual",
+  "name": "瑞士网格 · 专业简报",
+  "description": "高对比、强网格、低装饰的国际主义版式，适合管理简报、方案汇报和正式答辩。",
+  "entrypoint": "SKILL.md",
+  "permissions": {"executeScripts": false},
+  "communitySource": {
+    "inspiredBy": ["Akxan/ppt-agent-skill", "isatimur/presentation-md"],
+    "license": "MIT / repository terms",
+    "adaptation": "仅提炼视觉规则，不执行社区脚本或工作流"
+  }
+}

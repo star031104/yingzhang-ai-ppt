@@ -1,0 +1,14 @@
+{
+  "id": "playful-bento",
+  "version": "1.0.0",
+  "kind": "visual",
+  "name": "活力便当 · 创意展示",
+  "description": "大圆角、模块化拼贴和明快色块，适合创意提案、作品集、活动分享与年轻化品牌。",
+  "entrypoint": "SKILL.md",
+  "permissions": {"executeScripts": false},
+  "communitySource": {
+    "inspiredBy": ["Akxan/ppt-agent-skill", "isatimur/presentation-md"],
+    "license": "MIT / repository terms",
+    "adaptation": "仅提炼视觉规则，不执行社区脚本或工作流"
+  }
+}

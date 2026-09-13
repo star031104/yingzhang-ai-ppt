@@ -1,0 +1,14 @@
+{
+  "id": "editorial-story",
+  "version": "1.0.0",
+  "kind": "visual",
+  "name": "编辑叙事 · 人文报告",
+  "description": "以杂志编辑设计组织长文观点，强调留白、引文、章节节奏与图片叙事。",
+  "entrypoint": "SKILL.md",
+  "permissions": {"executeScripts": false},
+  "communitySource": {
+    "inspiredBy": ["Akxan/ppt-agent-skill", "isatimur/presentation-md"],
+    "license": "MIT / repository terms",
+    "adaptation": "仅提炼视觉规则，不执行社区脚本或工作流"
+  }
+}

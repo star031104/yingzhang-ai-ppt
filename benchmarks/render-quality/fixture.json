@@ -1,0 +1,31 @@
+{
+  "description": "人工构造的回归数据，仅检验图表呈现，不代表真实业务。",
+  "slides": [
+    {
+      "id": "multi-series", "position": 1, "role": "data",
+      "message": "三个方案的两项指标采用同一组数据与刻度",
+      "content": {"title": "准确率与召回率共同呈现方案差异", "bullets": [
+        "方案甲：准确率89%，召回率82%", "方案乙：准确率93%，召回率87%", "方案丙：准确率96%，召回率91%"
+      ]},
+      "visualIntent": {"primaryVisual": "chart", "selectedVariant": "chart-focus", "variantSelectionSource": "user", "archetypeCandidates": ["chart-focus", "table-highlight"]}
+    },
+    {
+      "id": "signed-growth", "position": 2, "role": "data",
+      "message": "负增长与超过百分之百的增长均保留真实方向和长度",
+      "content": {"title": "共同零基线区分增长与下降", "bullets": ["业务甲：增长率-12%", "业务乙：增长率125%", "业务丙：增长率0%"]},
+      "visualIntent": {"primaryVisual": "chart", "selectedVariant": "chart-focus", "variantSelectionSource": "user", "archetypeCandidates": ["chart-focus", "table-highlight"]}
+    },
+    {
+      "id": "mixed-units", "position": 3, "role": "data",
+      "message": "百分比与秒分别标注单位，避免在同一数值轴上比较",
+      "content": {"title": "不同单位的数据分别呈现", "bullets": ["方案甲：准确率89%，耗时20秒", "方案乙：准确率93%，耗时12秒"]},
+      "visualIntent": {"primaryVisual": "chart", "selectedVariant": "table-highlight", "variantSelectionSource": "user", "archetypeCandidates": ["chart-focus", "table-highlight"]}
+    },
+    {
+      "id": "missing-values", "position": 4, "role": "data",
+      "message": "缺失的 F1 保留为空缺，方案乙继续出现在比较表中",
+      "content": {"title": "缺失数据不再导致整行消失", "bullets": ["方案甲：Accuracy 0.8，F1 0.7", "方案乙：Accuracy 0.9", "方案丙：Accuracy 0.95，F1 0.91"]},
+      "visualIntent": {"primaryVisual": "chart", "selectedVariant": "table-highlight", "variantSelectionSource": "user", "archetypeCandidates": ["chart-focus", "table-highlight"]}
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "id": "nebula-tech",
+  "version": "1.0.0",
+  "kind": "visual",
+  "name": "星云科技 · 产品发布",
+  "description": "深色舞台、冷色高光和结构化技术图形，适合产品发布、技术架构与创新提案。",
+  "entrypoint": "SKILL.md",
+  "permissions": {"executeScripts": false},
+  "communitySource": {
+    "inspiredBy": ["Akxan/ppt-agent-skill", "isatimur/presentation-md"],
+    "license": "MIT / repository terms",
+    "adaptation": "仅提炼视觉规则，不执行社区脚本或工作流"
+  }
+}

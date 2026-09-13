@@ -1,0 +1,22 @@
+.source-understanding { margin: 14px 0 18px; padding: 0; overflow: hidden; }
+.source-understanding > summary { cursor: pointer; display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 72px; padding: 14px 18px; list-style: none; }
+.source-understanding > summary::-webkit-details-marker { display: none; }
+.source-understanding > summary > i { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 12px; background: #eaf8f3; color: #168a6b; font-size: 13px; font-style: normal; font-weight: 900; }
+.source-understanding.has-attention > summary > i { background: #fff3df; color: #b66a17; }
+.source-understanding > summary > span { display: grid; gap: 4px; }
+.source-understanding > summary > span b { color: #293148; font-size: 13px; }
+.source-understanding > summary > span small { font-size: 10px; }
+.source-understanding > summary > em { padding: 7px 10px; border-radius: 9px; background: #f3f4f8; color: #6f778b; font-size: 9px; font-style: normal; font-weight: 750; }
+.source-understanding[open] > summary { border-bottom: 1px solid #eceef4; background: #fafbfe; }
+.source-understanding[open] > summary > em:after { content: "收起"; font-size: 9px; }
+.source-understanding[open] > summary > em { font-size: 0; }
+.source-understanding > p, .source-understanding > article { margin-left: 22px; margin-right: 22px; }
+.source-understanding > summary span, .source-understanding small { color: #64748b; font-size: 13px; }
+.source-understanding > p { color: #64748b; font-size: 13px; line-height: 1.6; }
+.source-understanding article { border-top: 1px solid #e2e8f0; margin-top: 18px; padding-top: 12px; }
+.source-understanding h4 { margin: 4px 0 8px; overflow-wrap: anywhere; }
+.reading-outline { max-height: 300px; overflow: auto; margin-top: 12px; }
+.reading-outline details { padding: 10px 0; border-top: 1px solid #f1f5f9; }
+.reading-outline summary { cursor: pointer; font-size: 14px; font-weight: 600; }
+.reading-outline p, .reading-outline li { font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
+.reading-warnings { border-left: 3px solid #d97706; background: #fffbeb; color: #92400e; padding: 12px 12px 12px 32px; line-height: 1.7; font-size: 13px; }

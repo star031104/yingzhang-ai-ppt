@@ -1,0 +1,17 @@
+{
+  "version": "professional-benchmark-v2",
+  "families": [
+    {"id": "academic", "fixture": "academic-thesis/fixture.md", "focus": ["证据覆盖", "图表表达", "可访问性"]},
+    {"id": "business", "fixture": "business-report/fixture.md", "focus": ["品牌一致性", "决策表达", "跨软件交付"]},
+    {"id": "data", "fixture": "data-dashboard/fixture.md", "focus": ["数字保真", "原生图表", "高密度布局"]},
+    {"id": "product", "fixture": "product-launch/fixture.md", "focus": ["叙事节奏", "媒体叙事", "视觉多样性"]},
+    {"id": "reference-style", "fixture": "reference-style/README.md", "focus": ["模板约束学习", "母版保真", "字体与色彩语法"]}
+  ],
+  "thresholds": {
+    "professionalScore": 82,
+    "contentCoverage": 0.9,
+    "visualMaturity": 80,
+    "accessibility": 78,
+    "deliveryProfile": 80
+  }
+}

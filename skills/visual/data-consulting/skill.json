@@ -1,0 +1,14 @@
+{
+  "id": "data-consulting",
+  "version": "1.1.0",
+  "kind": "visual",
+  "name": "数据咨询 · 决策表达",
+  "description": "结论先行、图表优先、重点数字直接标注，适合经营复盘、战略建议和高管汇报。",
+  "entrypoint": "SKILL.md",
+  "permissions": {"executeScripts": false},
+  "communitySource": {
+    "inspiredBy": ["Akxan/ppt-agent-skill", "isatimur/presentation-md"],
+    "license": "MIT / repository terms",
+    "adaptation": "仅提炼视觉规则，不执行社区脚本或工作流"
+  }
+}

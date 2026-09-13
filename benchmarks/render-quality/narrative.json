@@ -1,0 +1,17 @@
+{
+  "description": "企业知识服务升级方案：合成演示样例，用于检查叙事节奏、内容容量与数据呈现，不代表真实业务。",
+  "expectedCharts": 1,
+  "expectedTables": 1,
+  "slides": [
+    {"id":"n-cover","position":1,"role":"cover","message":"从资料分散到有据可查的知识服务","content":{"title":"企业知识服务升级方案","bullets":["方案讨论稿","合成演示样例"]},"visualIntent":{"archetypeCandidates":["editorial-cover","hero"]}},
+    {"id":"n-agenda","position":2,"role":"agenda","message":"围绕问题、证据与实施安排形成完整判断","content":{"title":"本次讨论覆盖六个决策问题","bullets":["当前知识服务存在哪些障碍","升级方案如何组织内容与证据","试点方案的效果如何比较","哪些结论仍需进一步验证","推广前需要满足什么条件","下一阶段由谁负责推进"]},"visualIntent":{"archetypeCandidates":["numbered-list","section-map"]}},
+    {"id":"n-problem","position":3,"role":"problem","message":"资料可检索，还需要让答案可核实、可维护","content":{"title":"使用障碍集中在查找、核实和更新","bullets":["同一问题散落在多个文档，使用者需要反复查找","答案缺少具体出处，重要判断难以回到原文核实","资料更新与服务发布脱节，旧内容容易继续传播"]},"visualIntent":{"archetypeCandidates":["contrast","problem-cards"]}},
+    {"id":"n-method","position":4,"role":"method","message":"每次回答都能追溯到材料，更新也有明确责任","content":{"title":"知识服务围绕证据形成处理流程","bullets":["收集材料并记录来源与版本","检索与问题直接相关的原文","组织回答并关联对应证据","复核反馈并更新知识内容"]},"visualIntent":{"primaryVisual":"diagram","archetypeCandidates":["workflow","three-stage"]}},
+    {"id":"n-data","position":5,"role":"data","message":"方案丙在两项指标上较高，仍需结合成本选择","content":{"title":"试点方案的准确率与召回率对照","bullets":["方案甲：准确率89%，召回率82%","方案乙：准确率93%，召回率87%","方案丙：准确率96%，召回率91%"]},"visualIntent":{"primaryVisual":"chart","selectedVariant":"chart-focus","variantSelectionSource":"user","archetypeCandidates":["chart-focus","table-highlight"]}},
+    {"id":"n-tradeoff","position":6,"role":"data","message":"准确率和响应时间需要分别权衡","content":{"title":"不同单位的数据保留各自口径","bullets":["方案甲：准确率89%，耗时20秒","方案乙：准确率93%，耗时12秒"]},"visualIntent":{"primaryVisual":"chart","selectedVariant":"table-highlight","variantSelectionSource":"user","archetypeCandidates":["table-highlight"]}},
+    {"id":"n-insight","position":7,"role":"insight","message":"试点结果用于缩小选择范围，推广仍需补充验证","content":{"title":"现有证据支持三个阶段性判断","bullets":["较好的检索结果有助于提高回答的完整程度","原文引用可以降低人工复核时的查找负担","试点样本尚不足以代表全部业务场景"]},"visualIntent":{"archetypeCandidates":["finding-cards","big-statement"]}},
+    {"id":"n-boundary","position":8,"role":"background","message":"限定条件与评估结果一起呈现，才能正确理解方案价值","content":{"title":"推广前需要说明适用条件与边界","bullets":["本次示例中的测试数据均为人工构造，仅用于展示比较方法；不能据此认定任何真实系统已经达到同等效果，也不能将它们用于采购验收或对外宣传。","知识服务只覆盖已纳入管理并持续更新的材料，缺少来源的回答需要单独处理。","不同岗位的语言表达和信息需求存在差异，试点应包含实际使用者的常见问题。","试点结束后共同复核效果、维护负担与使用反馈，再确定推广范围。"]},"visualIntent":{"archetypeCandidates":["context-cards","big-statement"]}},
+    {"id":"n-conclusion","position":9,"role":"conclusion","message":"先验证一个有明确负责人和材料范围的试点","content":{"title":"下一阶段按五项任务推进","bullets":["业务负责人确定试点场景与使用人群","知识管理员整理材料来源与更新责任","技术团队完成检索与证据展示能力","试点用户反馈错误答案和使用障碍","项目团队根据结果决定是否扩大范围"]},"visualIntent":{"archetypeCandidates":["takeaways","summary-grid","next-steps"]}},
+    {"id":"n-questions","position":10,"role":"questions","message":"围绕试点边界与验收方式形成共识","content":{"title":"讨论与下一步","bullets":["优先验证哪个业务场景","怎样判断试点已经有效","由谁负责材料更新与复核"]},"visualIntent":{"archetypeCandidates":["minimal-qa","contact"]}}
+  ]
+}
