@@ -1,7 +1,6 @@
 import re
 from pathlib import Path
 
-
 FACTUAL_ROLES = {"method", "architecture", "evidence", "data", "comparison", "insight", "content"}
 TERM_STOPWORDS = {"分析", "研究", "任务", "系统", "方法", "结果", "设计", "实验", "实现", "总体", "处理", "应用"}
 PURPOSE_CAPTION_HINTS = [
@@ -95,34 +94,26 @@ def _figure_score(slide: dict, figure: dict) -> float:
             score += 14
         elif re.search(r"标签分布", caption):
             score -= 18
-    if re.search(r"实验结果|实验验证|基线对比|系统效率|生成质量", purpose):
-        if figure_kind != "chart":
-            return -100
-    if re.search(r"总体框架|技术路线|系统架构|构建流程|运行链路|模块协作", purpose):
-        if figure_kind != "diagram":
-            return -100
+    if re.search(r"实验结果|实验验证|基线对比|系统效率|生成质量", purpose) and figure_kind != "chart":
+        return -100
+    if re.search(r"总体框架|技术路线|系统架构|构建流程|运行链路|模块协作", purpose) and figure_kind != "diagram":
+        return -100
     # 对论文中常见的同主题多张图执行任务级匹配。宁可回退到可编辑图表，
     # 也不把标签分布、Prompt 或另一个任务的图放到当前结论页。
-    if re.search(r"总体框架|整体架构", task_query):
-        if not re.search(r"总体研究框架|总体框架|系统架构", caption):
-            return -100
-    if re.search(r"知识库|向量库|规范映射", task_query):
-        if not re.search(r"国标.*(?:向量库|知识库)|向量库.*流程", caption):
-            return -100
-    if re.search(r"隐私政策.*权限.*一致性.*(?:流程|机制|方法)", task_query):
-        if not re.search(r"隐私政策.*权限.*一致性.*(?:流程|分析)", caption):
-            return -100
-    if re.search(r"国标.*隐私政策.*(?:流程|机制|方法|合规性分析)", task_query):
-        if not re.search(r"国标.*隐私政策.*(?:流程|合规)", caption):
-            return -100
-    if re.search(r"系统.*架构|模块协作|工程实现", task_query):
-        if not re.search(r"总体研究框架|系统架构|模块", caption):
-            return -100
+    if re.search(r"总体框架|整体架构", task_query) and not re.search(r"总体研究框架|总体框架|系统架构", caption):
+        return -100
+    if re.search(r"知识库|向量库|规范映射", task_query) and not re.search(r"国标.*(?:向量库|知识库)|向量库.*流程", caption):
+        return -100
+    if re.search(r"隐私政策.*权限.*一致性.*(?:流程|机制|方法)", task_query) and not re.search(r"隐私政策.*权限.*一致性.*(?:流程|分析)", caption):
+        return -100
+    if re.search(r"国标.*隐私政策.*(?:流程|机制|方法|合规性分析)", task_query) and not re.search(r"国标.*隐私政策.*(?:流程|合规)", caption):
+        return -100
+    if re.search(r"系统.*架构|模块协作|工程实现", task_query) and not re.search(r"总体研究框架|系统架构|模块", caption):
+        return -100
     if re.search(r"实验结果|效果提升|性能对比|消融", slide_query) and re.search(r"标签分布", caption):
         return -100
-    if re.search(r"RAG|检索", task_query, re.I) and not re.search(r"系统.*架构|总体框架|整体架构", task_query):
-        if not re.search(r"RAG|检索|意图约束", caption, re.I):
-            return -100
+    if re.search(r"RAG|检索", task_query, re.IGNORECASE) and not re.search(r"系统.*架构|总体框架|整体架构", task_query) and not re.search(r"RAG|检索|意图约束", caption, re.IGNORECASE):
+        return -100
     task_rules = [
         (r"隐私政策.*权限.*一致性", r"隐私政策.*权限.*一致性"),
         (r"国标.*权限", r"国标.*权限"),
@@ -251,9 +242,7 @@ def normalize_visual_intent(plan: dict) -> None:
         )
         if any(item.get("type") == "source-image" for item in slide.get("assetBindings", [])):
             visual["primaryVisual"] = "source-image"
-        elif role == "data":
-            visual["primaryVisual"] = "chart"
-        elif role == "comparison" and metric_lines >= 2:
+        elif role == "data" or role == "comparison" and metric_lines >= 2:
             visual["primaryVisual"] = "chart"
         elif role == "comparison":
             visual["primaryVisual"] = "cards"

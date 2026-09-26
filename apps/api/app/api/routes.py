@@ -10,6 +10,8 @@ from app.db.models import (
     Job,
     ModelConfig,
     Project,
+    ProjectMember,
+    ProjectOwner,
     ProjectSkill,
     Provider,
     RoleAssignment,
@@ -20,7 +22,11 @@ from app.db.models import (
 )
 from app.db.session import SessionLocal, get_db
 from app.jobs.manager import job_manager
-from app.providers.openai_compatible import OpenAICompatibleClient, ProviderError, ImageGenerationPending
+from app.providers.openai_compatible import (
+    ImageGenerationPending,
+    OpenAICompatibleClient,
+    ProviderError,
+)
 from app.schemas import (
     ConnectionResult,
     JobCreate,
@@ -45,7 +51,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -84,9 +90,11 @@ def create_project(body: ProjectCreate, db: Session = Depends(get_db)):
 def list_projects(db: Session = Depends(get_db)):
     query = select(Project).order_by(Project.updated_at.desc())
     if settings.private_accounts_mode:
-        from app.db.models import ProjectOwner
         from app.security.accounts import owner_context
-        query = query.join(ProjectOwner).where(ProjectOwner.owner_id == owner_context.get())
+        identity = owner_context.get()
+        owned = select(ProjectOwner.project_id).where(ProjectOwner.owner_id == identity)
+        shared = select(ProjectMember.project_id).where(ProjectMember.account_id == identity)
+        query = query.where(Project.id.in_(owned.union(shared)))
     return list(db.scalars(query))
 
 
@@ -103,34 +111,50 @@ def update_project(project_id: str, body: ProjectUpdate, db: Session = Depends(g
 
 @router.delete("/projects/{project_id}", status_code=204)
 def delete_project(project_id: str, db: Session = Depends(get_db)):
-    project = db.get(Project, project_id)
-    if project is None:
-        raise HTTPException(404, "Project not found")
-    from app.personalization.data_management import delete_project_records
-    delete_project_records(db, project_id)
-    slide_ids = list(
-        db.scalars(
-            select(SlideSpecRecord.id).where(SlideSpecRecord.project_id == project_id)
+    from app.api.project_lifecycle import project_lifecycle_lock
+
+    with project_lifecycle_lock(project_id):
+        project = db.get(Project, project_id)
+        if project is None:
+            raise HTTPException(404, "Project not found")
+        active_jobs = list(
+            db.scalars(
+                select(Job.id).where(
+                    Job.project_id == project_id,
+                    Job.status.in_({"queued", "running"}),
+                )
+            )
         )
-    )
-    if slide_ids:
-        db.execute(delete(SlideCandidate).where(SlideCandidate.slide_id.in_(slide_ids)))
-        db.execute(delete(SlideVersion).where(SlideVersion.slide_id.in_(slide_ids)))
-    db.execute(delete(SlideSpecRecord).where(SlideSpecRecord.project_id == project_id))
-    db.execute(delete(DeckSpecRecord).where(DeckSpecRecord.project_id == project_id))
-    db.execute(delete(SourceDocument).where(SourceDocument.project_id == project_id))
-    db.execute(delete(ExportRecord).where(ExportRecord.project_id == project_id))
-    db.execute(delete(ProjectSkill).where(ProjectSkill.project_id == project_id))
-    db.execute(delete(Job).where(Job.project_id == project_id))
-    trashed = artifact_store.trash_project(project_id, project.artifact_path)
-    try:
-        db.delete(project)
-        db.commit()
-    except Exception:
-        db.rollback()
-        if trashed and trashed.exists():
-            trashed.replace(Path(project.artifact_path))
-        raise
+        if active_jobs:
+            raise HTTPException(
+                409,
+                "项目仍有运行中或排队任务，请先取消或等待任务结束后再删除",
+            )
+        from app.personalization.data_management import delete_project_records
+        delete_project_records(db, project_id)
+        slide_ids = list(
+            db.scalars(
+                select(SlideSpecRecord.id).where(SlideSpecRecord.project_id == project_id)
+            )
+        )
+        if slide_ids:
+            db.execute(delete(SlideCandidate).where(SlideCandidate.slide_id.in_(slide_ids)))
+            db.execute(delete(SlideVersion).where(SlideVersion.slide_id.in_(slide_ids)))
+        db.execute(delete(SlideSpecRecord).where(SlideSpecRecord.project_id == project_id))
+        db.execute(delete(DeckSpecRecord).where(DeckSpecRecord.project_id == project_id))
+        db.execute(delete(SourceDocument).where(SourceDocument.project_id == project_id))
+        db.execute(delete(ExportRecord).where(ExportRecord.project_id == project_id))
+        db.execute(delete(ProjectSkill).where(ProjectSkill.project_id == project_id))
+        db.execute(delete(Job).where(Job.project_id == project_id))
+        trashed = artifact_store.trash_project(project_id, project.artifact_path)
+        try:
+            db.delete(project)
+            db.commit()
+        except Exception:
+            db.rollback()
+            if trashed and trashed.exists():
+                trashed.replace(Path(project.artifact_path))
+            raise
 
 
 def provider_out(p):
@@ -325,11 +349,29 @@ def map_role(body: RoleMapping, db: Session = Depends(get_db)):
 
 @router.post("/jobs", response_model=JobOut, status_code=202)
 async def create_job(body: JobCreate, db: Session = Depends(get_db)):
+    from app.api.project_lifecycle import project_lifecycle_lock
+    from app.professional.governance import can
     from app.security.accounts import authorize_project
-    authorize_project(db, body.project_id)
-    if body.project_id and not db.get(Project, body.project_id):
-        raise HTTPException(404, "Project not found")
-    job = Job(kind=body.kind, project_id=body.project_id)
+
+    project_role = authorize_project(db, body.project_id)
+    if not can(project_role, "edit"):
+        raise HTTPException(403, "当前项目角色无权执行此操作")
+    if body.project_id:
+        with project_lifecycle_lock(body.project_id):
+            project = db.get(Project, body.project_id)
+            if not project:
+                raise HTTPException(404, "Project not found")
+            if not job_manager.has_capacity():
+                raise HTTPException(503, "生成队列已满，请稍后再提交任务")
+            job = Job(kind=body.kind, project_id=body.project_id)
+            db.add(job)
+            db.commit()
+            db.refresh(job)
+            job_manager.spawn(job_manager.run_demo(job.id), job_id=job.id)
+            return job
+    if not job_manager.has_capacity():
+        raise HTTPException(503, "生成队列已满，请稍后再提交任务")
+    job = Job(kind=body.kind, project_id=None)
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -444,8 +486,8 @@ async def stream_job_events(job_id: str, request: Request, db: Session = Depends
 
 @router.websocket("/jobs/{job_id}/events")
 async def job_events(job_id: str, websocket: WebSocket):
-    from app.security.public_access import current_user
     from app.security.accounts import authorize_project
+    from app.security.public_access import current_user
     if settings.private_accounts_mode or settings.public_test_mode:
         user = current_user(websocket)
         if not user:

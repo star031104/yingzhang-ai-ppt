@@ -14,6 +14,7 @@ import {
   editImportedPowerPointObject,
   generateNarration,
   getProfessionalPlatform,
+  getProjectStorage,
   getProjectWorkspace,
   getSlideChat,
   getSlideVersions,
@@ -50,6 +51,14 @@ import { SlideRail } from "./SlideRail";
 import { SourceUnderstanding } from "./SourceUnderstanding";
 import { VARIANT_LABELS } from "./presentationMeta";
 
+const formatBytes = (bytes: number) => {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024, unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1; }
+  return `${value.toFixed(1)} ${units[unit]}`;
+};
+
 export function ProjectEditor({
   projectId,
   skills,
@@ -77,6 +86,7 @@ export function ProjectEditor({
     [activeJob, setActiveJob] = useState<ProjectJob | null>(null),
     [previewKey, setPreviewKey] = useState(0),
     [qualityReport, setQualityReport] = useState<QualityReport | null>(null),
+    [storageReport, setStorageReport] = useState<Awaited<ReturnType<typeof getProjectStorage>> | null>(null),
     [editTarget, setEditTarget] = useState("title"),
     [editValue, setEditValue] = useState(""),
     [assetFile, setAssetFile] = useState<File | null>(null),
@@ -89,7 +99,8 @@ export function ProjectEditor({
     [pptAnimation, setPptAnimation] = useState("none"),
     [importedSlideIndex, setImportedSlideIndex] = useState(1),
     [importedObjectId, setImportedObjectId] = useState(""),
-    [importedObjectValue, setImportedObjectValue] = useState("");
+    [importedObjectValue, setImportedObjectValue] = useState(""),
+    [historyNavigation, setHistoryNavigation] = useState<{ slideId: string; cursorVersion: number; expectedCurrentVersion: number; redoVersions: number[] } | null>(null);
   const professional = useQuery({
     queryKey: ["professional-platform", projectId, previewKey],
     queryFn: () => getProfessionalPlatform(projectId),
@@ -108,6 +119,15 @@ export function ProjectEditor({
     queryFn: () => getSlideChat(projectId, current!.id),
     enabled: Boolean(current?.id),
   });
+  const navigationMatchesCurrent = Boolean(current && historyNavigation?.slideId === current.id &&
+    historyNavigation.expectedCurrentVersion === current.revision);
+  const historyCursor = navigationMatchesCurrent ? historyNavigation!.cursorVersion : current?.revision ?? 0;
+  const redoVersions = navigationMatchesCurrent ? historyNavigation!.redoVersions : [];
+  const firstSlideVersion = versions.data?.[0]?.version ?? 1;
+  const canUndo = Boolean(current && historyCursor > firstSlideVersion &&
+    versions.data?.some((version) => version.version === historyCursor - 1));
+  const canRedo = Boolean(current && redoVersions.length > 0 &&
+    versions.data?.some((version) => version.version === redoVersions.at(-1)));
   useEffect(() => {
     if (data && !slideId && data.slides[0]) setSlideId(data.slides[0].id);
     if (data) {
@@ -115,6 +135,10 @@ export function ProjectEditor({
       setSelectedSkills(data.skillIds);
     }
   }, [data, slideId]);
+  useEffect(() => {
+    if (!current) return;
+    setHistoryNavigation(null);
+  }, [current?.id]);
   useEffect(() => {
     if (!current) return;
     setTitle(current.content.title ?? "");
@@ -517,7 +541,7 @@ export function ProjectEditor({
             </div>
             <div className="p1-section">
               <b>成员与审批</b>
-              <div className="p1-row"><input value={memberName} onChange={(event) => setMemberName(event.target.value)} placeholder="成员姓名" /><button disabled={!memberName.trim()} onClick={async () => { await addProjectMember(projectId, memberName, "reviewer"); setMemberName(""); await workspace.refetch(); }}>添加审阅人</button></div>
+              <div className="p1-row"><input value={memberName} onChange={(event) => setMemberName(event.target.value)} placeholder="成员姓名或独立账号名称" /><button disabled={!memberName.trim()} onClick={async () => { await addProjectMember(projectId, memberName, "reviewer"); setMemberName(""); await workspace.refetch(); }}>添加审阅人</button></div>
               <div className="member-list">{(data.members || []).map((member) => <span key={member.id}>{member.name} · {member.role}</span>)}</div>
               <div className="approval-actions"><button onClick={async () => { await recordProjectApproval(projectId, "final", "changes_requested", "需要继续修改"); await workspace.refetch(); setStatus("已记录修改意见"); }}>要求修改</button><button className="primary" onClick={async () => { await recordProjectApproval(projectId, "final", "approved", "同意发布"); await workspace.refetch(); setStatus("最终审批已通过"); }}>批准发布</button><button onClick={async () => { try { const result = await publishProject(projectId); await workspace.refetch(); await navigator.clipboard?.writeText(`${location.origin}${result.url}`); setStatus("安全发布链接已创建并复制"); } catch (error) { setStatus(error instanceof Error ? error.message : "发布失败"); } }}>创建发布链接</button></div>
               {(data.publications || []).filter((item) => item.status === "active").map((item) => <a className="publication-link" key={item.id} href={`/api/v1/public/decks/${item.token}`} target="_blank" rel="noreferrer">打开发布快照</a>)}
@@ -564,13 +588,29 @@ export function ProjectEditor({
             </div>
             <div className="p2-block">
               <b>固定测试集与双盲评审</b>
-              <button disabled={busy} onClick={async () => { setBusy(true); try { const result = await runProfessionalEvaluation(projectId); await workspace.refetch(); setStatus(`专业评测已完成：固定测试 ${result.metrics.fixedCasesPassed}/${result.metrics.fixedCasesTotal}`); } catch (error) { setStatus(error instanceof Error ? error.message : "专业评测失败"); } finally { setBusy(false); } }}>运行专业评测</button>
+              <div className="evaluation-summary">
+                <span><b>{data.modelUsage?.inputTokens == null ? "未知" : data.modelUsage.inputTokens.toLocaleString()}</b>输入 tokens</span>
+                <span><b>{data.modelUsage?.outputTokens == null ? "未知" : data.modelUsage.outputTokens.toLocaleString()}</b>输出 tokens</span>
+                <span><b>{data.modelUsage?.requests ?? 0}</b>次模型请求</span>
+              </div>
+              <small>已报告 {data.modelUsage?.reportedRequests ?? 0} 次；未返回 token 统计 {data.modelUsage?.unreportedRequests ?? 0} 次。当前未配置模型价格，因此不显示费用。</small>
+              <button disabled={busy} onClick={async () => { setBusy(true); try { const result = await runProfessionalEvaluation(projectId); await workspace.refetch(); const excluded = (result.metrics.fixedCasesNotApplicable ?? 0) + (result.metrics.fixedCasesNotVerified ?? 0); setStatus(`专业评测已完成：适用测试 ${result.metrics.fixedCasesPassed}/${result.metrics.fixedCasesTotal}${excluded ? `，另有 ${excluded} 项不适用或尚未验证` : ""}`); } catch (error) { setStatus(error instanceof Error ? error.message : "专业评测失败"); } finally { setBusy(false); } }}>运行专业评测</button>
               {data.evaluationRuns?.[0] && <div className="evaluation-summary">
                 <span><b>{data.evaluationRuns[0].metrics.professionalScore ?? "—"}</b>专业分</span>
                 <span><b>{data.evaluationRuns[0].metrics.fixedCasesPassed ?? 0}/{data.evaluationRuns[0].metrics.fixedCasesTotal ?? 5}</b>固定测试</span>
+                {!!((data.evaluationRuns[0].metrics.fixedCasesNotApplicable ?? 0) + (data.evaluationRuns[0].metrics.fixedCasesNotVerified ?? 0)) && <span><b>{(data.evaluationRuns[0].metrics.fixedCasesNotApplicable ?? 0) + (data.evaluationRuns[0].metrics.fixedCasesNotVerified ?? 0)}</b>项未计入（不适用/未验证）</span>}
                 <span><b>{data.evaluationRuns[0].metrics.editsPerSlide ?? 0}</b>每页修改</span>
                 <span><b>{Math.round((data.evaluationRuns[0].metrics.userSelectionRate ?? 0) * 100)}%</b>选择率</span>
                 {data.evaluationRuns[0].metrics.blindReady && <a href={blindEvaluationUrl(data.evaluationRuns[0].blindToken)} target="_blank" rel="noreferrer">打开双盲评审包</a>}
+                {!data.evaluationRuns[0].metrics.blindReady && data.evaluationRuns[0].metrics.blindReadinessReason && <small>{data.evaluationRuns[0].metrics.blindReadinessReason}</small>}
+              </div>}
+              <button disabled={busy} onClick={async () => { setBusy(true); try { setStorageReport(await getProjectStorage(projectId)); } catch (error) { setStatus(error instanceof Error ? error.message : "读取存储用量失败"); } finally { setBusy(false); } }}>查看项目存储用量</button>
+              {storageReport && <div className="evaluation-summary">
+                <span><b>{formatBytes(storageReport.totalBytes)}</b>项目文件（{storageReport.totalFiles} 个）</span>
+                <span><b>{formatBytes(storageReport.groups.exports.bytes + storageReport.groups.evaluations.bytes)}</b>导出与评测快照</span>
+                <span><b>{formatBytes(storageReport.freeBytes)}</b>磁盘可用空间</span>
+                {storageReport.freeBytes < 1024 ** 3 && <small>磁盘空间不足 1 GB，建议先备份并清理不再需要的文件。</small>}
+                {storageReport.backupIncludesAllArtifacts && <small>工作区备份会包含这些项目文件。</small>}
               </div>}
             </div>
           </details>
@@ -632,7 +672,47 @@ export function ProjectEditor({
             </div>
           </details>
           <div className="panel version-panel">
-            <div className="panel-title"><span className="number">↺</span><div><h3>版本记录</h3><p>任何微调都可以回退</p></div></div>
+            <div className="panel-title"><span className="number">↺</span><div><h3>版本记录</h3><p>撤销、重做或恢复到任一历史版本</p></div></div>
+            <div className="partial-actions">
+              <button disabled={busy || !canUndo} onClick={async () => {
+                if (!current || !versions.data || !canUndo) return;
+                setBusy(true);
+                try {
+                  const navigationMatches = historyNavigation?.slideId === current.id &&
+                    historyNavigation.expectedCurrentVersion === current.revision;
+                  const cursor = navigationMatches ? historyNavigation!.cursorVersion : current.revision;
+                  const previous = versions.data.find((version) => version.version === cursor - 1);
+                  if (!previous) throw new Error("没有可撤销的上一版本");
+                  const result = await rollbackSlide(projectId, current.id, previous.version, current.revision);
+                  setHistoryNavigation({
+                    slideId: current.id,
+                    cursorVersion: previous.version,
+                    expectedCurrentVersion: result.version,
+                    redoVersions: [...(navigationMatches ? historyNavigation!.redoVersions : []), cursor],
+                  });
+                  await Promise.all([workspace.refetch(), versions.refetch()]);
+                  setStatus(`已撤销到版本 ${previous.version}`);
+                } catch (error) { setStatus(error instanceof Error ? error.message : "撤销失败"); }
+                finally { setBusy(false); }
+              }}>撤销上一步</button>
+              <button disabled={busy || !canRedo} onClick={async () => {
+                if (!current || !historyNavigation || !navigationMatchesCurrent || !canRedo) return;
+                setBusy(true);
+                try {
+                  const targetVersion = historyNavigation.redoVersions.at(-1)!;
+                  const result = await rollbackSlide(projectId, current.id, targetVersion, current.revision);
+                  setHistoryNavigation({
+                    slideId: current.id,
+                    cursorVersion: targetVersion,
+                    expectedCurrentVersion: result.version,
+                    redoVersions: historyNavigation.redoVersions.slice(0, -1),
+                  });
+                  await Promise.all([workspace.refetch(), versions.refetch()]);
+                  setStatus(`已重做到版本 ${targetVersion} 的内容（新版本 ${result.version}）`);
+                } catch (error) { setStatus(error instanceof Error ? error.message : "重做失败"); }
+                finally { setBusy(false); }
+              }}>重做</button>
+            </div>
             <div className="version-list">
               {(versions.data ?? []).slice().reverse().map((version) => (
                 <div key={version.version}>
@@ -641,10 +721,14 @@ export function ProjectEditor({
                     disabled={busy || version.version === (versions.data?.at(-1)?.version ?? 0)}
                     onClick={async () => {
                       if (!current) return;
-                      await rollbackSlide(projectId, current.id, version.version);
-                      await workspace.refetch();
-                      await versions.refetch();
-                      setStatus(`已回退到版本 ${version.version}`);
+                      setBusy(true);
+                      try {
+                        await rollbackSlide(projectId, current.id, version.version, current.revision);
+                        setHistoryNavigation(null);
+                        await Promise.all([workspace.refetch(), versions.refetch()]);
+                        setStatus(`已回退到版本 ${version.version}`);
+                      } catch (error) { setStatus(error instanceof Error ? error.message : "恢复历史版本失败"); }
+                      finally { setBusy(false); }
                     }}
                   >恢复</button>
                 </div>

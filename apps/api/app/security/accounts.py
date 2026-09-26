@@ -7,15 +7,21 @@ import secrets
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 
+from app.config import settings
+from app.db.models import (
+    PersonalAccount,
+    PersonalIdentity,
+    PersonalSession,
+    Project,
+    ProjectMember,
+    ProjectOwner,
+)
+from app.db.session import SessionLocal, get_db
+from app.personalization.runtime import lock
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
-
-from app.config import settings
-from app.db.models import PersonalAccount, PersonalIdentity, PersonalSession, Project, ProjectOwner
-from app.db.session import SessionLocal, get_db
-from app.personalization.runtime import lock
 
 owner_context: ContextVar[str | None] = ContextVar("private_owner", default=None)
 COOKIE = "yingzhang_private_session"
@@ -63,11 +69,27 @@ def account_login(name, password, request):
 
 def authorize_project(db, project_id, owner_id=None):
     if not settings.private_accounts_mode:
-        return
+        return "owner"
     owner_id = owner_id or owner_context.get()
     binding = db.get(ProjectOwner, project_id)
-    if not owner_id or not binding or binding.owner_id != owner_id:
+    if not owner_id:
         raise HTTPException(404, "项目不存在或不属于当前账号")
+    if binding and binding.owner_id == owner_id:
+        return "owner"
+    account = db.get(PersonalAccount, owner_id)
+    if account and account.role == "admin":
+        return "owner"
+    member = db.scalar(
+        select(ProjectMember).where(
+            ProjectMember.project_id == project_id,
+            ProjectMember.account_id == owner_id,
+        )
+    )
+    if not binding and not member:
+        raise HTTPException(404, "项目不存在或不属于当前账号")
+    if member:
+        return member.role
+    raise HTTPException(404, "项目不存在或不属于当前账号")
 
 
 class AccountCreate(BaseModel):

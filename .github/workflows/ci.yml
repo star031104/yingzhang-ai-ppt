@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uv sync --locked --extra dev
+      - run: npm ci
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npx playwright install --with-deps chromium
+      - run: sudo apt-get install -y fonts-noto-cjk
+      - run: uv run --locked --extra dev ruff check apps/api tests scripts
+      - name: Check fresh database migrations
+        run: uv run --locked alembic -c apps/api/alembic.ini upgrade head
+        env:
+          SLIDEFORGE_DATABASE_URL: sqlite:///./runtime/ci-migrations.sqlite3
+          SLIDEFORGE_ARTIFACT_ROOT: ./runtime/ci-artifacts
+      - run: uv run --locked --extra dev python scripts/verify-benchmarks.py
+      - run: uv run --locked --extra dev python -m pytest -q
+
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: sudo apt-get install -y fonts-noto-cjk
+      - run: npm run test:web
+      - run: npm run test:engine
+      - run: npm run build
+
+  libreoffice-delivery:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y libreoffice-impress fonts-noto-cjk
+      - run: uv sync --locked
+      - run: npm ci
+      - run: uv run --locked python scripts/verify-office-roundtrip.py

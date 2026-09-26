@@ -1,8 +1,10 @@
 import json
+
 import httpx
 import pytest
-from app.providers.openai_compatible import OpenAICompatibleClient,ProviderError
+from app.providers.openai_compatible import OpenAICompatibleClient, ProviderError
 from test_image_provider import mock_transport
+
 
 async def test_timed_out_task_resumes_without_another_submission(monkeypatch,tmp_path):
  calls=[]; ready=False
@@ -50,7 +52,7 @@ def test_short_named_metric_is_not_model_debris():
 
 
 def test_figure_binding_preserves_all_fact_references(tmp_path):
- from app.presentation_intelligence.assets import bind_source_figures, _figure_score
+ from app.presentation_intelligence.assets import _figure_score, bind_source_figures
  image=tmp_path/'figure.png';image.write_bytes(b'fixture')
  refs=[{'document':'paper','section':f'S{i}','page':i} for i in range(1,9)]
  slide={'role':'method','purpose':'处理流程','content':{'title':'处理流程'},'sourceRefs':refs.copy(),'visualIntent':{}}
@@ -61,8 +63,8 @@ def test_figure_binding_preserves_all_fact_references(tmp_path):
 
 
 def test_pending_image_test_returns_accepted_not_failure(client,monkeypatch):
+ from app.db.models import ModelConfig, Provider
  from app.db.session import SessionLocal
- from app.db.models import Provider,ModelConfig
  from app.providers.openai_compatible import ImageGenerationPending
  with SessionLocal() as db:
   provider=Provider(name='fixture',base_url='https://api.example.com/v1',extra_headers={});db.add(provider);db.flush()
@@ -86,6 +88,7 @@ def test_semantic_audit_does_not_require_bibliography_urls():
 
 def test_source_warning_group_preserves_pages():
  from types import SimpleNamespace
+
  from app.documents.review import source_reading_view
  row=SimpleNamespace(id='x',name='source',sha256='hash',model={'readingWarnings':[{'code':'table-text-only','page':page,'message':'table unavailable'} for page in [17,28,29]]})
  warnings=source_reading_view(row)['readingWarnings']
@@ -93,11 +96,11 @@ def test_source_warning_group_preserves_pages():
 
 
 async def test_optional_image_failure_does_not_block_page(client,monkeypatch):
- from test_personalization import make_profile,plan
- from app.db.session import SessionLocal
- from app.db.models import Provider,ModelConfig,RoleAssignment,Project,SlideSpecRecord
  from app.api.workflow_routes import ensure_generated_images
+ from app.db.models import ModelConfig, Project, Provider, RoleAssignment, SlideSpecRecord
+ from app.db.session import SessionLocal
  from app.slides import load_slides
+ from test_personalization import make_profile, plan
  profile=make_profile(client);project,_=plan(client,profile)
  with SessionLocal() as db:
   p=Provider(name='synthetic',base_url='https://api.example.com/v1',extra_headers={});db.add(p);db.flush()

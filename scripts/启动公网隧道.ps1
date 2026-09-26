@@ -89,4 +89,4 @@ $publicUrl | Set-Content -LiteralPath (Join-Path $shareRoot "公网地址.txt") 
 
 Write-Host ""
 Write-Host "映章 Cloudflare 公网测试已启动：$publicUrl" -ForegroundColor Green
-Write-Host "测试账号见：$(Join-Path $shareRoot '测试账号.txt')"
+Write-Host "测试者和管理员密码使用项目 .env 中分别配置的共享测试密码。"

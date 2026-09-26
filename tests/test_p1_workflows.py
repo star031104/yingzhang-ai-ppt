@@ -88,7 +88,7 @@ def test_p1_chat_assets_members_and_single_slide_job(client):
         f"/api/v1/projects/{project['id']}/approvals",
         json={"stage": "final", "status": "approved", "comment": "可以发布"},
     )
-    assert approval.status_code == 201 and approval.json()["status"] == "approved"
+    assert approval.status_code == 409  # A deck without verified pages cannot receive final approval.
 
     job = client.post(f"/api/v1/projects/{project['id']}/slides/{slide_id}/jobs/regenerate").json()
     for _ in range(80):

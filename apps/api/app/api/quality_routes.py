@@ -1,13 +1,23 @@
 import copy
+import hashlib
 import json
 import secrets
+import shutil
 from pathlib import Path
 from typing import Literal
 
 from app.api.dependencies import project_or_404
-from app.db.models import BlindReview, DeckSpecRecord, EvaluationRun, ImportedDeck
+from app.db.models import (
+    BlindReview,
+    DeckSpecRecord,
+    EvaluationRun,
+    ExportRecord,
+    ImportedDeck,
+    PersonalBinding,
+)
 from app.db.session import get_db
 from app.evaluation import build_evaluation_metrics
+from app.evaluation.fingerprints import export_source_fingerprint
 from app.slides import load_slides
 from app.sources import build_brief_source, load_sources
 from app.validation.accessibility import audit_accessibility
@@ -23,6 +33,14 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 router = APIRouter(prefix="/api/v1")
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class BlindReviewRequest(BaseModel):
@@ -165,15 +183,45 @@ def run_professional_evaluation(project_id: str, db: Session = Depends(get_db)):
     quality = validate(project_id, db)
     imported = db.scalar(select(ImportedDeck).where(ImportedDeck.project_id == project_id))
     metrics = build_evaluation_metrics(project, db, quality, imported.analysis if imported else None)
-    generated = export_path(project, "pptx")
+    slides = load_slides(project_id, db)
+    deck_record = db.get(DeckSpecRecord, project_id)
+    requested = (deck_record.reproducibility or {}).get("request", {}) if deck_record else {}
+    explicit_visual = bool(requested.get("skillIds") or (requested.get("professionalBrief") or {}).get("brandName"))
+    binding = db.get(PersonalBinding, project_id)
+    reference = (binding.snapshot or {}).get("reference") if binding and not explicit_visual else None
+    fingerprint = export_source_fingerprint(slides, reference)
+    version_root = (Path(project.artifact_path) / "exports" / "versions").resolve()
+    current_export = next((record for record in db.scalars(
+        select(ExportRecord).where(ExportRecord.project_id == project_id, ExportRecord.format == "pptx")
+        .order_by(ExportRecord.created_at.desc())
+    ) if (record.report or {}).get("sourceFingerprint") == fingerprint
+        and (record.report or {}).get("artifactSha256")
+        and Path(record.artifact_path).is_file()
+        and Path(record.artifact_path).resolve().parent == version_root
+        and file_sha256(Path(record.artifact_path)) == (record.report or {}).get("artifactSha256")), None)
+    generated = Path(current_export.artifact_path) if current_export else None
     imported_path = Path((imported.analysis or {}).get("_workingPath", imported.artifact_path)) if imported else None
-    candidates = [str(path) for path in (generated, imported_path) if path and path.is_file()]
+    candidates = [path for path in (generated, imported_path) if path and path.is_file()]
     if len(candidates) == 2 and secrets.randbelow(2):
         candidates.reverse()
-    metrics["_blindCandidates"] = {label: path for label, path in zip(("A", "B"), candidates)}
     metrics["blindReady"] = len(candidates) == 2
+    if len(candidates) != 2:
+        metrics["blindReadinessReason"] = (
+            "当前页面内容尚无匹配且可校验的 PPTX 导出；请重新导出后创建评估"
+            if not generated else "双盲评审需要两份候选文件，当前候选不足"
+        )
     row = EvaluationRun(project_id=project_id, suite=metrics["suite"], metrics=metrics)
     db.add(row)
+    db.flush()
+    frozen_candidates = {}
+    candidate_root = Path(project.artifact_path) / "evaluations" / row.id / "candidates"
+    candidate_root.mkdir(parents=True, exist_ok=True)
+    for label, source in zip(("A", "B"), candidates):
+        frozen = candidate_root / f"{label}.pptx"
+        shutil.copyfile(source, frozen)
+        digest = file_sha256(frozen)
+        frozen_candidates[label] = {"path": str(frozen), "sha256": digest}
+    row.metrics = {**metrics, "_blindCandidates": frozen_candidates}
     db.commit()
     visible = {key: value for key, value in metrics.items() if not key.startswith("_")}
     return {"id": row.id, "suite": row.suite, "metrics": visible, "blindToken": row.blind_token}
@@ -195,9 +243,17 @@ def get_blind_evaluation(token: str, db: Session = Depends(get_db)):
 @router.get("/evaluations/blind/{token}/candidate/{label}")
 def download_blind_candidate(token: str, label: Literal["A", "B"], db: Session = Depends(get_db)):
     row = db.scalar(select(EvaluationRun).where(EvaluationRun.blind_token == token))
-    path = Path(((row.metrics or {}).get("_blindCandidates", {}) if row else {}).get(label, ""))
-    if not row or not path.is_file():
+    candidate = ((row.metrics or {}).get("_blindCandidates", {}) if row else {}).get(label)
+    if isinstance(candidate, str):
+        raise HTTPException(410, "此旧评估未冻结候选文件，请重新创建评估以确保盲评内容一致")
+    if not row or not isinstance(candidate, dict):
         raise HTTPException(404, "Blind candidate not found")
+    path = Path(candidate.get("path", ""))
+    if not path.is_file():
+        raise HTTPException(404, "Blind candidate not found")
+    digest = file_sha256(path)
+    if digest != candidate.get("sha256"):
+        raise HTTPException(409, "盲评候选文件完整性校验失败")
     return FileResponse(path, filename=f"candidate-{label}.pptx")
 
 
@@ -209,6 +265,17 @@ def submit_blind_review(
     if not row:
         raise HTTPException(404, "Blind evaluation not found")
     required = {"fundamentals", "visualDesign", "completeness", "correctness", "fidelity"}
+    candidates = (row.metrics or {}).get("_blindCandidates", {})
+    if candidates and any(not isinstance(item, dict) for item in candidates.values()):
+        raise HTTPException(410, "此旧评估未冻结候选文件，请重新创建评估后提交评分")
+    if len(candidates) != 2:
+        raise HTTPException(409, "此评估没有两份有效候选文件，无法进行双盲评分")
+    if body.candidate_label not in candidates:
+        raise HTTPException(422, "该评估中不存在此候选项")
+    for candidate in candidates.values():
+        path = Path(candidate.get("path", ""))
+        if not path.is_file() or file_sha256(path) != candidate.get("sha256"):
+            raise HTTPException(409, "盲评候选文件缺失或已改变，无法提交评分")
     if set(body.scores) != required or any(not isinstance(value, int) or value < 0 or value > 100 for value in body.scores.values()):
         raise HTTPException(422, "All five scores must be integers from 0 to 100")
     review = BlindReview(

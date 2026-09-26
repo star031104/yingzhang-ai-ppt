@@ -2,11 +2,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from app.api.workflow_routes import (
-    academic_metric_story_bullets,
-    academic_result_source_refs,
     academic_result_topics,
     best_source_refs,
     clean_audience_bullet,
+    fit_audience_bullet,
+    referenced_metric_claims,
     sanitize_numeric_claims,
 )
 from app.intelligence.evidence import extract_evidence_graph, split_sentences
@@ -131,7 +131,7 @@ def test_visual_reflection_keeps_multi_year_series_as_chart():
     assert slides[0]["visualIntent"]["selectedVariant"] == "chart-focus"
 
 
-def test_academic_result_page_uses_complete_cited_metrics_instead_of_half_sentences():
+def test_referenced_metric_claims_use_only_cited_source_content():
     materials = [source("paper.pdf", [
         {
             "id": "S034", "title": "第34页", "page": 34,
@@ -155,23 +155,41 @@ def test_academic_result_page_uses_complete_cited_metrics_instead_of_half_senten
             ),
         },
     ])]
-    refs = academic_result_source_refs("应用分类实验结果与误差分析", materials)
-    bullets = academic_metric_story_bullets("应用分类实验结果与误差分析", refs, materials)
-    assert [ref["section"] for ref in refs] == ["S034", "S035", "S036"]
-    assert len(bullets) == 4
-    assert bullets[0].endswith("F1 0.9333")
-    assert any("Weighted F1 0.8818" in bullet for bullet in bullets)
-    assert all(not bullet.endswith(("至", "为", "，")) for bullet in bullets)
+    refs = [{"document": "paper.pdf", "section": "S034"}, {"document": "paper.pdf", "section": "S035"}]
+    bullets = referenced_metric_claims("实验结果与指标对比", refs, materials)
+    assert bullets
+    assert all(any(number in claim for number in ("0.8981", "0.9390", "0.9277", "0.9333", "0.8554", "0.8818", "0.5424", "0.5037", "0.5128")) for claim in bullets)
+    assert all("S036" not in claim for claim in bullets)
 
 
-def test_academic_metric_story_does_not_activate_without_matching_source_values():
+def test_referenced_metric_claims_require_metric_or_result_responsibility():
     materials = [source("other.pdf", [{
         "id": "S001", "title": "结果", "page": 1,
         "text": "本研究完成了另一类实验，但没有应用分类指标。",
     }])]
-    assert academic_metric_story_bullets(
-        "应用分类实验结果", [{"document": "other.pdf", "section": "S001"}], materials
-    ) == []
+    assert referenced_metric_claims("团队介绍", [{"document": "other.pdf", "section": "S001"}], materials) == []
+
+
+def test_numeric_claim_keeps_its_entity_metric_binding():
+    materials = [source("results.md", [{
+        "id": "S001", "title": "对比结果",
+        "text": "方案A：准确率71.2%；方案B：准确率89.6%。",
+    }])]
+    refs = [{"document": "results.md", "section": "S001"}]
+    slide = {"message": "方案对比", "sourceRefs": refs, "content": {
+        "title": "准确率对比", "bullets": ["方案A准确率89.6%，方案B准确率71.2%"],
+    }}
+    sanitize_numeric_claims(slide, extract_evidence_graph(materials), materials)
+    corrected = slide["content"]["bullets"][0]
+    assert "方案A：准确率71.2%" in corrected
+    assert "方案B：准确率89.6%" in corrected
+    assert "方案A准确率89.6%" not in corrected
+
+
+def test_bullet_fitting_never_drops_a_limitation():
+    claim = "准确率达到89.6%，但仅限内部样本，不能代表外部行业。"
+    fitted = fit_audience_bullet(claim, limit=24)
+    assert "仅限内部样本" in fitted and "不能代表外部行业" in fitted
 
 
 def test_academic_result_topics_are_discovered_from_document_headings():

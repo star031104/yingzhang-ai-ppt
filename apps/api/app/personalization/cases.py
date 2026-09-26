@@ -7,7 +7,13 @@ from collections import Counter
 from fastapi import HTTPException
 from sqlalchemy import delete, select
 
-from app.db.models import PersonalCase, PersonalFeedback, PersonalMemory, PersonalOutbox, SlideSpecRecord
+from app.db.models import (
+    PersonalCase,
+    PersonalFeedback,
+    PersonalMemory,
+    PersonalOutbox,
+    SlideSpecRecord,
+)
 from app.personalization.schemas import OPTIONS
 
 

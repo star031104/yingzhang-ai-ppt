@@ -1,5 +1,6 @@
 import re
 
+from app.intelligence.numeric_claims import numeric_binding_mismatches
 from app.validation.visual_maturity import assess_visual_maturity
 
 NUMBER_RE = re.compile(
@@ -52,6 +53,7 @@ ISSUE_GUIDANCE = {
     "long-slide-title": ("缩短页面标题", "标题只表达本页唯一结论，补充解释放到正文。"),
     "weak-chart-encoding": ("补全图表数据", "图表页至少应有两个可比较的数据点或改用主张型版式。"),
     "unsupported-metric": ("修正无来源数字", "只保留能在当前页面引用材料中逐项核对的数字。"),
+    "metric-binding-mismatch": ("核对指标与对象", "页面中的数值虽然出现在材料中，但对应的方案、指标或对象不一致。请按引用原文修正标签和值的对应关系。"),
     "broken-source-ref": ("修复来源链接", "重新绑定存在的文档、章节与页码。"),
     "missing-semantic-coverage": ("补全核心主张", "重要章节虽已上传，但其核心主张尚未被任何页面承载。"),
     "missing-key-evidence": ("补齐答辩关键证据", "每个核心章节应有实质说明，各任务的主要结果指标应有来源且出现在页面中。"),
@@ -532,6 +534,22 @@ def validate_deck(slides: list[dict], sources: list[dict]) -> dict:
         referenced_text = " ".join(
             source_sections.get((ref.get("document"), ref.get("section")), "") for ref in refs
         )
+        claims = [
+            ("title", title),
+            ("message", str(slide.get("message", ""))),
+            *((f"bullet-{index + 1}", str(value)) for index, value in enumerate(bullets)),
+        ]
+        for field, claim in claims:
+            mismatches = numeric_binding_mismatches(claim, referenced_text)
+            if mismatches:
+                issues.append({
+                    "slide": position,
+                    "code": "metric-binding-mismatch",
+                    "severity": "error",
+                    "field": field,
+                    "mismatches": mismatches,
+                    "message": "数值与引用材料中的指标或对象不匹配",
+                })
         audience_tokens = _semantic_tokens(text)
         source_tokens = _semantic_tokens(referenced_text)
         lexical_tokens = {token for token in audience_tokens if not re.fullmatch(r"\d+(?:\.\d+)?%?", token)}

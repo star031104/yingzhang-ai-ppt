@@ -1,7 +1,6 @@
 import copy
 import re
 
-
 ALLOWED_TARGETS = {"title", "message", "bullet", "bullets", "visual"}
 ALLOWED_OPERATIONS = {"replace", "append", "delete", "move"}
 

@@ -17,6 +17,5 @@ def upgrade():
 
 
 def downgrade():
-    from app.db.models import Base
-    for name in reversed(TABLES):
-        Base.metadata.tables[name].drop(op.get_bind(), checkfirst=True)
+    # Accounts, reviews and verification history must survive code rollback.
+    return None

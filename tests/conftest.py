@@ -8,11 +8,16 @@ from app.db.models import Base
 from app.db.session import engine
 from app.main import app
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 
 @pytest.fixture
 def client():
     Base.metadata.drop_all(engine)
+    with engine.begin() as connection:
+        connection.execute(text("DROP TABLE IF EXISTS alembic_version"))
     with TestClient(app) as test_client:
         yield test_client
     Base.metadata.drop_all(engine)
+    with engine.begin() as connection:
+        connection.execute(text("DROP TABLE IF EXISTS alembic_version"))

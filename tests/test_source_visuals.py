@@ -2,11 +2,10 @@ import io
 from pathlib import Path
 
 import fitz
-from PIL import Image, ImageDraw
-
 from app.documents import PARSER_VERSION, parse_source
 from app.presentation_intelligence.assets import bind_source_figures, normalize_visual_intent
 from app.presentation_intelligence.planner import plan_deck
+from PIL import Image, ImageDraw
 
 
 def make_pdf_with_figure() -> bytes:
@@ -31,7 +30,7 @@ def test_pdf_parser_extracts_renderable_figures_with_caption_and_provenance(tmp_
         "application/pdf",
         asset_dir=tmp_path / "assets",
     )
-    assert model["parserVersion"] == PARSER_VERSION == "5.5"
+    assert model["parserVersion"] == PARSER_VERSION
     assert len(model["figures"]) == 1
     figure = model["figures"][0]
     assert Path(figure["path"]).is_file()

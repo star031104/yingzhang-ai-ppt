@@ -2,8 +2,8 @@ import hashlib
 import io
 import shutil
 import zipfile
-from xml.etree import ElementTree as ET
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 from fastapi import HTTPException
 
@@ -75,6 +75,7 @@ def reference_view(row):
 
 def erase_comparison_files(db, owner_id):
     from sqlalchemy import select
+
     from app.db.models import PersonalComparison, Project
     for row in db.scalars(select(PersonalComparison).where(PersonalComparison.owner_id == owner_id)):
         project = db.get(Project, row.project_id)

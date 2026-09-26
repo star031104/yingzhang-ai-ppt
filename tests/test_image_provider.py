@@ -1,9 +1,10 @@
 import base64
 import json
+
 import httpx
 import pytest
-from app.providers.openai_compatible import OpenAICompatibleClient, ProviderError
 from app.providers.image_models import image_candidates
+from app.providers.openai_compatible import OpenAICompatibleClient, ProviderError
 
 
 def mock_transport(monkeypatch, handler):

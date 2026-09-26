@@ -1,9 +1,14 @@
 import json
+
 import httpx
 import pymupdf
-from app.intelligence.content_selection import source_sentences
+from app.db.models import ModelUsageRecord
+from app.db.session import SessionLocal
 from app.documents.parser import _aligned_metric_tables
+from app.intelligence.content_selection import source_sentences
 from app.providers.openai_compatible import OpenAICompatibleClient
+from app.providers.usage import usage_project_id
+from sqlalchemy import select
 from test_image_provider import mock_transport
 
 
@@ -56,6 +61,29 @@ async def test_null_choices_are_retried_without_crashing(monkeypatch):
     client=OpenAICompatibleClient('https://example.com/v1','fixture',{},1)
     assert json.loads(await client.chat_completion('fixture',[],json_mode=True))=={'slides':[]}
     assert len(calls)==2
+
+
+async def test_provider_token_usage_is_saved_without_prompt_or_response(client, monkeypatch):
+    project = client.post("/api/v1/projects", json={"name": "用量统计"}).json()
+    mock_transport(monkeypatch, lambda _: httpx.Response(200, json={
+        "usage": {"prompt_tokens": 17, "completion_tokens": 9, "total_tokens": 26},
+        "choices": [{"finish_reason": "stop", "message": {"content": "不要保存这段输出"}}],
+    }))
+    usage_token = usage_project_id.set(project["id"])
+    try:
+        await OpenAICompatibleClient("https://example.com/v1", "fixture", {}, 1).chat_completion(
+            "test-model", [{"role": "user", "content": "不要保存这段输入"}]
+        )
+    finally:
+        usage_project_id.reset(usage_token)
+
+    with SessionLocal() as db:
+        rows = list(db.scalars(select(ModelUsageRecord).where(ModelUsageRecord.project_id == project["id"])))
+    assert len(rows) == 1
+    assert (rows[0].model_id, rows[0].input_tokens, rows[0].output_tokens, rows[0].request_count) == ("test-model", 17, 9, 1)
+    usage = client.get(f"/api/v1/projects/{project['id']}/workspace").json()["modelUsage"]
+    assert usage["inputTokens"] == 17 and usage["outputTokens"] == 9
+    assert "不要保存" not in str(usage)
 
 
 def test_ambiguous_metric_row_does_not_become_partial_table():

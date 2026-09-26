@@ -170,8 +170,8 @@ class ProjectJobService:
             if expected_epoch and (not snapshot or snapshot.get("epoch") != expected_epoch):
                 await self._cancel(job_id, project_id, JobCancelled("个人经验上下文已失效"))
                 return
-        from app.security.accounts import owner_context
         from app.db.models import ProjectOwner
+        from app.security.accounts import owner_context
         with SessionLocal() as owner_db:
             project_owner = owner_db.get(ProjectOwner, project_id)
         owner_token = owner_context.set(project_owner.owner_id if project_owner else owner_context.get())

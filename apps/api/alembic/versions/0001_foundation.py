@@ -9,11 +9,14 @@ depends_on = None
 
 
 def upgrade():
-    from app.db.models import Base
+    # This migration must never read today's ORM metadata. The frozen snapshot
+    # keeps fresh installs reproducible while later revisions evolve it.
+    from app.db.schema_snapshot import create_missing_schema
 
-    Base.metadata.create_all(op.get_bind())
+    create_missing_schema(op, op.get_bind(), allow_legacy_usage_columns=True)
 
 
 def downgrade():
-    for table in ("role_assignments", "model_configs", "providers", "jobs", "projects"):
-        op.drop_table(table)
+    # This revision is adopted by existing workspaces that contain user data.
+    # Downgrading the foundation would destroy projects and provider settings.
+    return None

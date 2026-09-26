@@ -1,14 +1,13 @@
 import hashlib
 import io
-import ipaddress
 import json
-import socket
 import zipfile
 from pathlib import Path
 
-import httpx
 from app.db.models import InstalledSkill, ProjectSkill
 from app.db.session import get_db
+from app.security.public_fetch import PublicFetchError, fetch_public_bytes
+from app.security.uploads import read_upload_limited
 from app.skills.constants import VISUAL_SKILL_KINDS
 from app.skills.manager import install_skill
 from app.templates.analyzer import analyze_reference_pptx
@@ -71,7 +70,12 @@ def select_github_skill_subtree(data: bytes, source_url: str) -> bytes:
     with zipfile.ZipFile(source) as archive, zipfile.ZipFile(
         target, "w", compression=zipfile.ZIP_DEFLATED
     ) as bundle:
-        for info in archive.infolist():
+        entries = archive.infolist()
+        if len(entries) > 12000 or sum(item.file_size for item in entries) > 100 * 1024 * 1024:
+            raise ValueError("技能包解压后超过 100 MB 或包含过多文件")
+        if any(item.file_size > max(item.compress_size, 1) * 200 for item in entries):
+            raise ValueError("技能包压缩比例异常")
+        for info in entries:
             normalized = info.filename.replace("\\", "/")
             _, _, relative = normalized.partition("/")
             prefix = f"{subtree}/"
@@ -87,26 +91,13 @@ def select_github_skill_subtree(data: bytes, source_url: str) -> bytes:
     return target.getvalue()
 
 
-def assert_public_url(value: str) -> None:
-    host = httpx.URL(value).host
-    if not host:
-        raise ValueError("项目链接缺少有效域名")
-    for info in socket.getaddrinfo(host, None):
-        address = ipaddress.ip_address(info[4][0])
-        if (
-            address.is_private
-            or address.is_loopback
-            or address.is_link_local
-            or address.is_reserved
-        ):
-            raise ValueError("技能项目链接必须指向公开网络地址")
-
-
 @router.post("/reference/analyze")
 async def analyze_reference(file: UploadFile = File(...)):
     if not (file.filename or "").lower().endswith(".pptx"):
         raise HTTPException(415, "PPTX required")
-    return analyze_reference_pptx(await file.read())
+    return analyze_reference_pptx(
+        await read_upload_limited(file, 20 * 1024 * 1024, "参考 PowerPoint")
+    )
 
 
 @router.post("/reference/compile-skill", status_code=201)
@@ -115,7 +106,7 @@ async def compile_reference_skill(
     name: str = Form("reference-style"),
     db: Session = Depends(get_db),
 ):
-    data = await file.read()
+    data = await read_upload_limited(file, 20 * 1024 * 1024, "参考 PowerPoint")
     analysis = analyze_reference_pptx(data)
     skill_id = "reference-" + "".join(ch for ch in name.lower() if ch.isalnum() or ch == "-")[:60]
     root = Path("skills/generated") / skill_id / "1.0.0"
@@ -193,7 +184,10 @@ async def install_skill_route(
     file: UploadFile = File(...), allow_scripts: bool = Form(False), db: Session = Depends(get_db)
 ):
     try:
-        result = install_skill(await file.read(), Path("skills/installed").resolve(), allow_scripts)
+        result = install_skill(
+            await read_upload_limited(file, 50 * 1024 * 1024, "技能包"),
+            Path("skills/installed").resolve(), allow_scripts,
+        )
     except (ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(422, str(exc)) from exc
     existing = db.get(InstalledSkill, result["id"])
@@ -228,18 +222,15 @@ async def install_skill_from_url(body: SkillUrlRequest, db: Session = Depends(ge
     if settings.local_only_mode:
         raise HTTPException(403, "完全本地模式请导入本地技能包")
     errors, data = [], None
-    async with httpx.AsyncClient(timeout=45, follow_redirects=True) as client:
-        for candidate in skill_download_urls(str(body.url)):
-            try:
-                assert_public_url(candidate)
-                response = await client.get(candidate, headers={"User-Agent": "YingZhang/0.2"})
-                response.raise_for_status()
-                if len(response.content) > 50 * 1024 * 1024:
-                    raise ValueError("技能包超过 50 MB 限制")
-                data = select_github_skill_subtree(response.content, str(body.url))
-                break
-            except (httpx.HTTPError, ValueError, socket.gaierror) as exc:
-                errors.append(str(exc))
+    for candidate in skill_download_urls(str(body.url)):
+        try:
+            archive, _, _ = await fetch_public_bytes(
+                candidate, max_bytes=50 * 1024 * 1024, timeout=45
+            )
+            data = select_github_skill_subtree(archive, str(body.url))
+            break
+        except (PublicFetchError, ValueError, zipfile.BadZipFile) as exc:
+            errors.append(str(exc))
     if data is None:
         raise HTTPException(422, "下载技能项目失败：" + "；".join(errors[-2:]))
     try:

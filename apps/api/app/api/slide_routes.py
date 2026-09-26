@@ -141,6 +141,13 @@ async def _run_slide_job(job_id: str, project_id: str, slide_id: str):
 
 @router.post("/projects/{project_id}/slides/{slide_id}/jobs/regenerate", status_code=202)
 async def start_slide_regenerate_job(project_id: str, slide_id: str, db: Session = Depends(get_db)):
+    from app.api.project_lifecycle import project_lifecycle_lock
+
+    with project_lifecycle_lock(project_id):
+        return _start_slide_regenerate_job_locked(project_id, slide_id, db)
+
+
+def _start_slide_regenerate_job_locked(project_id: str, slide_id: str, db: Session):
     project_or_404(project_id, db)
     row = db.get(SlideSpecRecord, slide_id)
     if not row or row.project_id != project_id:
@@ -152,6 +159,8 @@ async def start_slide_regenerate_job(project_id: str, slide_id: str, db: Session
     ))
     if active:
         return _job_view(active)
+    if not job_manager.has_capacity():
+        raise HTTPException(503, "生成队列已满，请稍后再提交任务")
     job = Job(
         project_id=project_id,
         kind=f"slide-regenerate:{slide_id}",

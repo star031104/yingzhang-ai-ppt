@@ -1,3 +1,4 @@
+from app.api.dependencies import project_or_404
 from app.db.models import PersonalBinding, PersonalFeedback, PersonalMemory, PersonalProfile
 from app.db.session import get_db
 from app.personalization import service
@@ -13,6 +14,7 @@ from app.personalization.schemas import (
     ResetPreview,
     RevisionRequest,
 )
+from app.security.uploads import read_upload_limited
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import delete, select
 
@@ -133,8 +135,6 @@ def reject_feedback(event_id: str, db=Depends(get_db)):
 
 @router.get("/projects/{project_id}/personalization")
 def project_personalization(project_id: str, db=Depends(get_db)):
-    from app.api.dependencies import project_or_404
-
     project_or_404(project_id, db)
     owner = service.identity(db)
     row = db.get(PersonalBinding, project_id)
@@ -207,9 +207,7 @@ async def learn_reference(
 
     if not (file.filename or "").lower().endswith(".pptx"):
         raise HTTPException(415, "请选择 PPTX 参考稿")
-    data = await file.read(20 * 1024 * 1024 + 1)
-    if len(data) > 20 * 1024 * 1024:
-        raise HTTPException(413, "参考稿不能超过 20 MB")
+    data = await read_upload_limited(file, 20 * 1024 * 1024, "参考稿")
     try:
         value, metadata = extract_reference(data)
     except Exception as exc:

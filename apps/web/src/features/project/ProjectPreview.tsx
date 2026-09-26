@@ -1,4 +1,4 @@
-import { exportUrl, exportWithTemplate, sampleUrl } from "../../api";
+import { exportDownloadUrl, exportUrl, exportWithTemplate, sampleUrl } from "../../api";
 import type { ProjectWorkspace, QualityReport } from "../../api";
 import { Empty } from "../../components/Empty";
 import { SKILL_META } from "../skills/skillMeta";
@@ -26,6 +26,11 @@ export function ProjectPreview({
     data.gates.outline === "approved" &&
     data.gates.sample !== "approved" &&
     data.sampleAvailable;
+  const readOnlyRole = data.projectRole === "viewer" || data.projectRole === "reviewer";
+  const fileUrl = (format: "html" | "pptx" | "pdf", stage: "draft" | "final" = "final") =>
+    readOnlyRole
+      ? exportDownloadUrl(projectId, format, stage)
+      : exportUrl(projectId, format, stage);
 
   return (
     <div className="preview-column">
@@ -43,11 +48,11 @@ export function ProjectPreview({
         )}
       </div>
       <div className="download-row">
-        <a aria-label="下载 HTML" href={exportUrl(projectId, "html")}><span>HTML</span><small>网页演示</small></a>
-        <a aria-label="下载 PPTX" href={exportUrl(projectId, "pptx")}><span>PPTX</span><small>继续编辑</small></a>
-        <a aria-label="下载 PDF" href={exportUrl(projectId, "pdf")}><span>PDF</span><small>固定版式</small></a>
+        <a aria-label="下载 HTML 或网页媒体包" href={fileUrl("html")}><span>HTML</span><small>网页演示与媒体</small></a>
+        <a aria-label="下载 PPTX" href={fileUrl("pptx")}><span>PPTX</span><small>继续编辑</small></a>
+        <a aria-label="下载 PDF" href={fileUrl("pdf")}><span>PDF</span><small>固定版式</small></a>
       </div>
-      <p className="field-help">正式交付须通过质量检查。需要先核对内容时，可 <a href={exportUrl(projectId, "pptx", "draft")}>下载检查草稿 PPTX</a>。</p>
+      <p className="field-help">正式交付须通过质量检查。需要先核对内容时，可 <a href={fileUrl("pptx", "draft")}>下载检查草稿 PPTX</a>。</p>
       <label className="template-export">
         <input
           type="file"

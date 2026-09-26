@@ -1,14 +1,18 @@
 import copy
+import hashlib
 import json
+import os
+import shutil
+import uuid
+import zipfile
 from pathlib import Path
 from typing import Literal
 
-from app.personalization.runtime import guarded_sync_generation, lock, assert_current
 from app.api.dependencies import project_or_404
 from app.db.models import (
-    ExportRecord,
     DeckSpecRecord,
     DeliveryVerification,
+    ExportRecord,
     ImportedDeck,
     ImportedObjectEdit,
     Project,
@@ -16,6 +20,8 @@ from app.db.models import (
     SlideVersion,
 )
 from app.db.session import get_db
+from app.evaluation.fingerprints import export_source_fingerprint
+from app.personalization.runtime import assert_current, guarded_sync_generation, lock
 from app.powerpoint import (
     apply_generated_effects,
     export_roundtrip,
@@ -25,6 +31,7 @@ from app.powerpoint import (
 from app.presentation_engine.service import EngineError, presentation_engine
 from app.professional import audit_delivery_profile
 from app.security.public_access import current_user
+from app.security.uploads import read_upload_limited
 from app.slides import load_slides
 from app.templates.native_fill import fill_native_template
 from app.validation.render_freshness import matches_render_stamp
@@ -57,6 +64,40 @@ def export_path(project: Project, format_name: str) -> Path:
     return Path(project.artifact_path) / "exports" / f"presentation.{format_name}"
 
 
+def immutable_export_path(project: Project, format_name: str) -> Path:
+    """Allocate a unique artifact path so an export record never points at mutable bytes."""
+    root = Path(project.artifact_path) / "exports" / "versions"
+    root.mkdir(parents=True, exist_ok=True)
+    return root / f"{uuid.uuid4().hex}.{format_name}"
+
+
+def publish_latest_export(source: Path, latest: Path) -> None:
+    """Keep the legacy latest-export path for desktop verification workflows."""
+    latest.parent.mkdir(parents=True, exist_ok=True)
+    temporary = latest.with_name(f".{latest.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        shutil.copyfile(source, temporary)
+        os.replace(temporary, latest)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def artifact_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def is_versioned_export(project: Project, path: Path) -> bool:
+    version_root = (Path(project.artifact_path) / "exports" / "versions").resolve()
+    try:
+        return path.resolve().parent == version_root
+    except OSError:
+        return False
+
+
 def ensure_current_preview(project: Project, slides: list[dict]) -> None:
     root = Path(project.artifact_path) / "slides" / "rendered" / "slides"
     stale = []
@@ -72,6 +113,65 @@ def ensure_current_preview(project: Project, slides: list[dict]) -> None:
             stale.append(slide["position"])
     if stale or not slides:
         raise HTTPException(409, {"message": "页面预览尚未生成或已过期，请重新生成后导出", "positions": stale})
+
+
+def assemble_delivery_html(project: Project, slides: list[dict], command: str = "assemble") -> Path:
+    source = Path(project.artifact_path) / "slides" / "rendered"
+    try:
+        presentation_engine.run(command, slides, source)
+    except EngineError as exc:
+        if "超过 50 MB" in str(exc):
+            raise HTTPException(413, "音视频素材总量超过单文件 HTML 的 50 MB 限制，请压缩或减少素材") from exc
+        raise HTTPException(409, "页面预览无法组装，请重新生成页面后重试") from exc
+    return source / "index.html"
+
+
+def html_media_bytes(slides: list[dict]) -> int:
+    total = 0
+    for slide in slides:
+        for asset in slide.get("assetBindings") or []:
+            if asset.get("type") not in {"licensed-video", "licensed-audio"}:
+                continue
+            try:
+                total += Path(asset["path"]).stat().st_size
+            except (KeyError, OSError):
+                raise HTTPException(409, "绑定的音视频素材缺失，请重新绑定素材")
+    return total
+
+
+def create_html_bundle(project: Project, slides: list[dict], target: Path) -> Path:
+    work = target.with_suffix(".bundle")
+    if work.exists():
+        shutil.rmtree(work)
+    try:
+        shutil.copytree(Path(project.artifact_path) / "slides" / "rendered", work)
+        presentation_engine.run("assemble-bundle", slides, work)
+        index = work / "index.html"
+        html = index.read_text(encoding="utf-8")
+        media_files = {}
+        for slide in slides:
+            for asset in slide.get("assetBindings") or []:
+                if asset.get("type") not in {"licensed-video", "licensed-audio"}:
+                    continue
+                media = Path(asset.get("path", "")).resolve()
+                if not media.is_file():
+                    raise HTTPException(409, "绑定的音视频素材缺失，请重新绑定素材")
+                relative = f"assets/{artifact_sha256(media)}{media.suffix.lower()}"
+                html = html.replace(media.as_uri(), relative)
+                media_files[relative] = media
+        if "file:" in html:
+            raise HTTPException(409, "无法安全打包本机媒体素材，请重新绑定并生成页面")
+        index.write_text(html, encoding="utf-8")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+            archive.write(index, "presentation.html")
+            for relative, media in media_files.items():
+                archive.write(media, relative)
+        publish_latest_export(target, export_path(project, "html").with_name("presentation-html.zip"))
+        export_path(project, "html").unlink(missing_ok=True)
+        return target
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def require_final_quality(project_id, db, stage):
@@ -93,20 +193,47 @@ def verify_pptx_file(target, slides):
 
 @router.get("/projects/{project_id}/export/html")
 @router.post("/projects/{project_id}/export/html")
-def export_html(project_id: str, stage: Literal["draft", "final"] = "draft", db: Session = Depends(get_db)):
-    require_final_quality(project_id, db, stage)
+def export_html(
+    project_id: str,
+    request: Request,
+    stage: Literal["draft", "final"] = "draft",
+    db: Session = Depends(get_db),
+):
     project = project_or_404(project_id, db)
     source = Path(project.artifact_path) / "slides" / "rendered" / "index.html"
     if not source.exists():
         raise HTTPException(409, "Generate slides first")
-    ensure_current_preview(project, load_slides(project_id, db))
+    slides = load_slides(project_id, db)
+    if request.query_params.get("preview") is not None:
+        if stage == "final":
+            require_final_quality(project_id, db, stage)
+        ensure_current_preview(project, slides)
+        if "file:" in source.read_text(encoding="utf-8"):
+            raise HTTPException(413, "音视频素材总量超过单文件 HTML 的 50 MB 限制，请压缩素材后查看便携预览")
+        return FileResponse(source, media_type="text/html", headers={"Cache-Control": "no-store"})
+    require_final_quality(project_id, db, stage)
+    ensure_current_preview(project, slides)
     # Assemble selected candidates so partial edits cannot leave an older deck index.
-    presentation_engine.run("assemble", load_slides(project_id, db), source.parent)
-    target = export_path(project, "html")
-    target.write_bytes(source.read_bytes())
-    db.add(ExportRecord(project_id=project_id, format="html", artifact_path=str(target), report={}))
+    bundled = html_media_bytes(slides) > 50 * 1024 * 1024
+    if bundled:
+        target = immutable_export_path(project, "zip")
+        create_html_bundle(project, slides, target)
+    else:
+        source = assemble_delivery_html(project, slides)
+        target = immutable_export_path(project, "html")
+        target.write_bytes(source.read_bytes())
+        publish_latest_export(target, export_path(project, "html"))
+        export_path(project, "html").with_name("presentation-html.zip").unlink(missing_ok=True)
+    report = {"sourceFingerprint": export_source_fingerprint(slides), "deliveryStage": stage,
+              "artifactSha256": artifact_sha256(target), "portableBundle": bundled}
+    db.add(ExportRecord(
+        project_id=project_id,
+        format="html",
+        artifact_path=str(target),
+        report=report,
+    ))
     db.commit()
-    return FileResponse(target)
+    return FileResponse(target, filename="presentation-html.zip" if bundled else "presentation.html")
 
 
 @router.get("/projects/{project_id}/export/pptx")
@@ -124,28 +251,58 @@ def export_pptx(
     profile = profile or ((binding.snapshot.get("preferences") or {}).get("delivery_profile") if binding else None) or "powerpoint-windows"
     project = project_or_404(project_id, db)
     slides = load_slides(project_id, db)
-    target = export_path(project, "pptx")
+    target = immutable_export_path(project, "pptx")
     if not slides:
         raise HTTPException(409, "Generate an outline first")
     reference_report = None
     deck_record = db.get(DeckSpecRecord, project_id)
     requested = (deck_record.reproducibility or {}).get("request", {}) if deck_record else {}
-    explicit_visual = bool(requested.get("skillIds") or requested.get("professionalBrief", {}).get("brandName"))
-    native_reference = binding.snapshot.get("reference") if binding and not explicit_visual else None
-    import hashlib
-    source_fingerprint = hashlib.sha256(json.dumps({"slides": slides, "reference": native_reference}, sort_keys=True).encode()).hexdigest()
+    explicit_visual = bool(requested.get("skillIds") or (requested.get("professionalBrief") or {}).get("brandName"))
+    native_reference = (binding.snapshot or {}).get("reference") if binding and not explicit_visual else None
+    source_fingerprint = export_source_fingerprint(slides, native_reference)
     if native_reference and stage == "final":
-        digest = hashlib.sha256(target.read_bytes()).hexdigest() if target.is_file() else ""
-        approved = db.scalar(select(DeliveryVerification).where(DeliveryVerification.project_id == project_id,
-            DeliveryVerification.file_hash == digest, DeliveryVerification.software == profile, DeliveryVerification.status == "accepted"))
-        exported = db.scalar(select(ExportRecord).where(ExportRecord.project_id == project_id, ExportRecord.format == "pptx").order_by(ExportRecord.created_at.desc()))
-        if not approved or not exported or exported.report.get("sourceFingerprint") != source_fingerprint:
+        latest = export_path(project, "pptx")
+        digest = artifact_sha256(latest) if latest.is_file() else ""
+        approvals = db.scalars(select(DeliveryVerification).where(
+            DeliveryVerification.project_id == project_id,
+            DeliveryVerification.file_hash == digest,
+            DeliveryVerification.software == profile,
+            DeliveryVerification.status == "accepted",
+        )).all()
+        approved = next((row for row in approvals if
+            (row.report or {}).get("humanVerified") is True
+            and not (row.report or {}).get("manualUpload")
+        ), None)
+        exported = next((row for row in db.scalars(
+            select(ExportRecord).where(ExportRecord.project_id == project_id, ExportRecord.format == "pptx")
+            .order_by(ExportRecord.created_at.desc())
+        ) if (row.report or {}).get("sourceFingerprint") == source_fingerprint
+            and (row.report or {}).get("artifactSha256") == digest
+            and (row.report or {}).get("deliveryProfile") == profile
+            and is_versioned_export(project, Path(row.artifact_path))
+            and Path(row.artifact_path).is_file()), None)
+        if not approved or not exported:
             raise HTTPException(409, "原生参考母版需要先导出草稿，在所选交付软件中完成实际验收，再下载正式稿")
-        return FileResponse(target, filename=target.name)
+        if artifact_sha256(Path(exported.artifact_path)) != digest:
+            raise HTTPException(409, "已验收的导出文件已改变，请重新导出并验收")
+        finalized = next((row for row in db.scalars(
+            select(ExportRecord).where(ExportRecord.project_id == project_id, ExportRecord.format == "pptx")
+            .order_by(ExportRecord.created_at.desc())
+        ) if (row.report or {}).get("deliveryStage") == "final"
+            and (row.report or {}).get("sourceFingerprint") == source_fingerprint
+            and (row.report or {}).get("artifactSha256") == digest
+            and Path(row.artifact_path) == Path(exported.artifact_path)), None)
+        if not finalized:
+            final_report = {**(exported.report or {}), "deliveryStage": "final",
+                            "finalizedFromVerification": approved.id}
+            db.add(ExportRecord(project_id=project_id, format="pptx",
+                                artifact_path=exported.artifact_path, report=final_report))
+            db.commit()
+        return FileResponse(exported.artifact_path, filename="presentation.pptx")
     with lock:
         assert_current()
         if native_reference:
-            from app.db.models import PersonalReference, PersonalIdentity
+            from app.db.models import PersonalIdentity, PersonalReference
             from app.personalization.private_files import reference_root
             reference = db.get(PersonalReference, native_reference["id"])
             owner = db.get(PersonalIdentity, binding.owner_id)
@@ -164,6 +321,7 @@ def export_pptx(
         unsupported = [node for node in nodes if node.get("type") in {"image", "svg"}]
         report = {
             "deliveryStage": stage,
+            "deliveryProfile": profile,
             "referenceTemplate": reference_report,
             "sourceFingerprint": source_fingerprint,
             "fileVerification": verify_pptx_file(target, slides),
@@ -180,14 +338,16 @@ def export_pptx(
             "powerPointEffects": effects_report,
             "deliveryAudit": audit_delivery_profile(slides, profile),
         }
-        (target.parent / "pptx-degradation-report.json").write_text(
+        (target.with_suffix(".report.json")).write_text(
             json.dumps(report, indent=2), encoding="utf-8"
         )
+        report["artifactSha256"] = artifact_sha256(target)
+        publish_latest_export(target, export_path(project, "pptx"))
         db.add(
             ExportRecord(project_id=project_id, format="pptx", artifact_path=str(target), report=report)
         )
         db.commit()
-        return FileResponse(target, filename=target.name)
+        return FileResponse(target, filename="presentation.pptx")
 
 
 
@@ -221,13 +381,74 @@ def export_pdf(project_id: str, stage: Literal["draft", "final"] = "draft", db: 
     source = Path(project.artifact_path) / "slides" / "rendered" / "index.html"
     if not source.exists():
         raise HTTPException(409, "Generate slides first")
-    ensure_current_preview(project, load_slides(project_id, db))
-    presentation_engine.run("assemble", load_slides(project_id, db), source.parent)
-    target = export_path(project, "pdf")
+    slides = load_slides(project_id, db)
+    ensure_current_preview(project, slides)
+    source = assemble_delivery_html(project, slides, "assemble-local")
+    target = immutable_export_path(project, "pdf")
     presentation_engine.export_pdf(source, target)
-    db.add(ExportRecord(project_id=project_id, format="pdf", artifact_path=str(target), report={}))
+    publish_latest_export(target, export_path(project, "pdf"))
+    db.add(ExportRecord(
+        project_id=project_id,
+        format="pdf",
+        artifact_path=str(target),
+        report={"sourceFingerprint": export_source_fingerprint(slides), "deliveryStage": stage,
+                "artifactSha256": artifact_sha256(target)},
+    ))
     db.commit()
-    return FileResponse(target, filename=target.name)
+    return FileResponse(target, filename="presentation.pdf")
+
+
+@router.get("/projects/{project_id}/downloads/{format_name}")
+def download_existing_export(
+    project_id: str,
+    format_name: Literal["html", "pptx", "pdf"],
+    stage: Literal["draft", "final"] = "final",
+    db: Session = Depends(get_db),
+):
+    """Download an existing export only while it still matches current project content."""
+    project = project_or_404(project_id, db)
+    if stage == "final":
+        require_final_quality(project_id, db, stage)
+    slides = load_slides(project_id, db)
+    reference = None
+    if format_name == "pptx":
+        from app.db.models import PersonalBinding
+
+        binding = db.get(PersonalBinding, project_id)
+        deck_record = db.get(DeckSpecRecord, project_id)
+        requested = (deck_record.reproducibility or {}).get("request", {}) if deck_record else {}
+        explicit_visual = bool(
+            requested.get("skillIds") or (requested.get("professionalBrief") or {}).get("brandName")
+        )
+        reference = (
+            (binding.snapshot or {}).get("reference")
+            if binding and not explicit_visual
+            else None
+        )
+    expected_fingerprint = export_source_fingerprint(slides, reference)
+    records = db.scalars(
+        select(ExportRecord)
+        .where(ExportRecord.project_id == project_id, ExportRecord.format == format_name)
+        .order_by(ExportRecord.created_at.desc())
+    )
+    record = next(
+        (
+            row for row in records
+            if (row.report or {}).get("deliveryStage", "draft") == stage
+            and (row.report or {}).get("sourceFingerprint") == expected_fingerprint
+        ),
+        None,
+    )
+    target = Path(record.artifact_path) if record else None
+    expected_sha256 = ((record.report or {}).get("artifactSha256")
+                       or (record.report or {}).get("fileVerification", {}).get("sha256")) if record else None
+    if (not record or not target or not target.is_file() or not expected_sha256
+            or not is_versioned_export(project, target)):
+        raise HTTPException(409, "当前内容没有可直接下载的对应导出，请由编辑者重新生成")
+    if artifact_sha256(target) != expected_sha256:
+        raise HTTPException(409, "导出文件完整性校验失败，请由编辑者重新生成")
+    filename = "presentation-html.zip" if format_name == "html" and (record.report or {}).get("portableBundle") else f"presentation.{format_name}"
+    return FileResponse(target, filename=filename)
 
 
 @router.post("/projects/{project_id}/export/template-pptx")
@@ -240,7 +461,11 @@ async def export_template_pptx(
         raise HTTPException(409, "Generate an outline first")
     target = Path(project.artifact_path) / "exports" / "template-filled.pptx"
     try:
-        report = fill_native_template(await template.read(), slides, target)
+        report = fill_native_template(
+            await read_upload_limited(template, 20 * 1024 * 1024, "PowerPoint 模板"), slides, target
+        )
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(422, f"Invalid PowerPoint template: {exc}") from exc
     db.add(
@@ -334,7 +559,7 @@ async def import_powerpoint(
     project = project_or_404(project_id, db)
     if Path(file.filename or "").suffix.lower() != ".pptx":
         raise HTTPException(415, "Only .pptx files can be imported")
-    payload = await file.read()
+    payload = await read_upload_limited(file, 20 * 1024 * 1024, "PowerPoint 文件")
     try:
         analysis = inspect_pptx(payload)
     except Exception as exc:

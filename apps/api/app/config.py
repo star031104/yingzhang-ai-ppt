@@ -1,11 +1,13 @@
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SLIDEFORGE_", env_file=".env", extra="ignore")
     database_url: str = "sqlite:///./runtime/data/yingzhang.db"
+    migrate_on_startup: bool = True
     artifact_root: Path = Path("./runtime/artifacts")
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     vault_key: str | None = None
@@ -19,17 +21,27 @@ class Settings(BaseSettings):
     public_rate_limit_per_minute: int = 180
     public_generation_limit_per_10_minutes: int = 12
     public_upload_limit_mb: int = 25
+    trusted_proxy_ips: str = ""
     render_concurrency: int = 2
+    max_concurrent_jobs: int = Field(default=2, ge=1, le=16)
+    max_queued_jobs: int = Field(default=6, ge=0, le=64)
     local_only_mode: bool = False
     private_accounts_mode: bool = False
     private_cookie_secure: bool = False
     office_renderer: str = "auto"
     office_executable: str | None = None
     optional_image_wait_seconds: float = 45
+    ocr_executable: str | None = None
+    ocr_languages: str = "chi_sim+eng"
+    ocr_max_pages: int = 20
 
     @property
     def cors_origin_list(self):
         return [x.strip() for x in self.cors_origins.split(",") if x.strip()]
+
+    @property
+    def trusted_proxy_ip_list(self):
+        return [x.strip() for x in self.trusted_proxy_ips.split(",") if x.strip()]
 
 
 settings = Settings()

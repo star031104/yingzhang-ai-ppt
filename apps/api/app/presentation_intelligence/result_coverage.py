@@ -38,7 +38,7 @@ def complete_primary_results(plan, sources):
             notes = slide.setdefault('speakerIntent', {})
             notes['talkingPoints'] = list(dict.fromkeys([*notes.get('talkingPoints', []), *bullets]))
             # Preserve prior detail in notes, reserving visible space for results.
-            metrics = [b for b in bullets if re.search(r'Accuracy\s*[:：]?\s*0\.\d+', b, re.I)]
+            metrics = [b for b in bullets if re.search(r'Accuracy\s*[:：]?\s*0\.\d+', b, re.IGNORECASE)]
             others = [b for b in bullets if b not in metrics]
             slide['content']['bullets'] = [*metrics, point, *others][:5]
             ref = table.get('sourceRef') or {'document':source['name'], 'section':table['section'], 'page':table.get('page')}

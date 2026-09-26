@@ -121,7 +121,7 @@ def _semantic_match(slide: dict, family: str) -> bool:
             "media",
         },
         "conclusion": {"list", "cards", "timeline", "typography"},
-        "content": {"split", "cards", "typography", "flow", "image-split"},
+        "content": {"split", "cards", "typography", "flow", "metrics", "image-split"},
     }
     return family in expected.get(role, {family})
 
@@ -165,8 +165,10 @@ def assess_visual_maturity(slides: list[dict], visual_slides: list[dict] | None 
         family = str(
             rendered.get("family")
             or variant_family(
-                rendered.get("variant") or visual.get("selectedVariant"),
-                visual.get("primaryVisual"),
+                rendered.get("variant")
+                or visual.get("selectedVariant")
+                or (slide.get("layoutPlan") or {}).get("recommendedVariant"),
+                visual.get("primaryVisual") or visual.get("plannedFamily"),
             )
         )
         families.append(family)
