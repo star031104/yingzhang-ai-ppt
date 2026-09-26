@@ -8,6 +8,16 @@ $shareRoot = Join-Path $projectRoot "runtime\share"
 New-Item -ItemType Directory -Force -Path $shareRoot | Out-Null
 Set-Location -LiteralPath $projectRoot
 
+# The public tunnel must never inherit the unauthenticated local mode.
+$env:SLIDEFORGE_PUBLIC_TEST_MODE = 'true'
+$env:SLIDEFORGE_PRIVATE_ACCOUNTS_MODE = 'false'
+$pythonPath = Join-Path $projectRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $pythonPath)) { $pythonPath = "python" }
+$configurationCheck = & $pythonPath -c "from app.config import settings; from app.security.public_access import validate_public_config; validate_public_config(); assert settings.public_test_mode and not settings.private_accounts_mode; print('ok')" 2>&1
+if ($LASTEXITCODE -ne 0 -or ($configurationCheck -join "") -notmatch "ok") {
+    throw "公网测试未启动：请在 .env 中配置不同的测试者/管理员密码、至少 32 位会话密钥，并确保 Python 依赖已安装。"
+}
+
 if (-not $SkipBuild) {
     Write-Host "正在构建映章网页…"
     & npm.cmd --prefix (Join-Path $projectRoot "apps\web") run build
@@ -37,8 +47,6 @@ if ($null -ne $occupied) {
     if (-not $portReleased) { throw "旧的映章服务未能及时停止。" }
 }
 
-$pythonPath = Join-Path $projectRoot ".venv\Scripts\python.exe"
-if (-not (Test-Path -LiteralPath $pythonPath)) { $pythonPath = "python" }
 $apiOut = Join-Path $shareRoot "api-output.log"
 $apiError = Join-Path $shareRoot "api-error.log"
 $apiProcess = Start-Process -FilePath $pythonPath `
@@ -58,5 +66,23 @@ for ($attempt = 0; $attempt -lt 40; $attempt++) {
     } catch {}
 }
 if (-not $healthy) { throw "映章服务启动失败，请查看 $apiError" }
+
+$publicSession = $null
+try { $publicSession = Invoke-RestMethod -UseBasicParsing -Uri "http://127.0.0.1:8000/api/v1/auth/session" -TimeoutSec 3 } catch {}
+if ($null -eq $publicSession -or -not $publicSession.publicMode -or $publicSession.privateMode -or $publicSession.authenticated) {
+    Stop-Process -Id $apiProcess.Id -Force -ErrorAction SilentlyContinue
+    throw "公网测试未启动：服务没有进入未登录的共享测试模式。"
+}
+$projectsRequireLogin = $false
+try {
+    $projectsProbe = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8000/api/v1/projects" -TimeoutSec 3
+    $projectsRequireLogin = $projectsProbe.StatusCode -eq 401
+} catch {
+    if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 401) { $projectsRequireLogin = $true }
+}
+if (-not $projectsRequireLogin) {
+    Stop-Process -Id $apiProcess.Id -Force -ErrorAction SilentlyContinue
+    throw "公网测试未启动：项目接口未能证明会拒绝未登录请求。"
+}
 
 & (Join-Path $PSScriptRoot "启动公网隧道.ps1")

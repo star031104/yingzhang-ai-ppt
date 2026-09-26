@@ -1,9 +1,20 @@
 import secrets
 import uuid
 from datetime import datetime
+from typing import ClassVar
 
 from app.db.base import Base, TimestampMixin
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 
@@ -83,6 +94,10 @@ class SlideSpecRecord(TimestampMixin, Base):
     position: Mapped[int] = mapped_column()
     spec: Mapped[dict] = mapped_column(JSON, default=dict)
     current_version: Mapped[int] = mapped_column(default=1)
+    __mapper_args__: ClassVar[dict] = {
+        "version_id_col": current_version,
+        "version_id_generator": False,
+    }
 
 
 class SlideCandidate(TimestampMixin, Base):
@@ -178,6 +193,7 @@ class ProjectMember(TimestampMixin, Base):
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
     name: Mapped[str] = mapped_column(String(80))
     role: Mapped[str] = mapped_column(String(30), default="viewer")
+    account_id: Mapped[str | None] = mapped_column(ForeignKey("personal_accounts.id"), nullable=True, index=True)
 
 
 class ApprovalRecord(TimestampMixin, Base):
@@ -188,6 +204,7 @@ class ApprovalRecord(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(30), default="requested")
     actor: Mapped[str] = mapped_column(String(80))
     comment: Mapped[str] = mapped_column(Text, default="")
+    snapshot_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class PublishedDeck(TimestampMixin, Base):
@@ -231,6 +248,19 @@ class EvaluationRun(TimestampMixin, Base):
     blind_token: Mapped[str] = mapped_column(String(64), unique=True, default=lambda: secrets.token_urlsafe(18))
     metrics: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(30), default="completed")
+
+
+class ModelUsageRecord(TimestampMixin, Base):
+    """Token counts returned by providers; prompts and completions are never stored."""
+    __tablename__ = "model_usage_records"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    model_id: Mapped[str] = mapped_column(String(240))
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    request_count: Mapped[int] = mapped_column(Integer, default=1)
+    usage_requests: Mapped[int] = mapped_column(Integer, default=0)
+    unreported_requests: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class BlindReview(TimestampMixin, Base):

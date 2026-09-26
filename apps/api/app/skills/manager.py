@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import re
 import shutil
@@ -51,13 +52,14 @@ def manifest_from_skill_md(bundle: zipfile.ZipFile, names: list[str], digest: st
 
 def install_skill(data: bytes, root: Path, allow_scripts: bool = False) -> dict:
     digest = hashlib.sha256(data).hexdigest()
-    archive = root / f"incoming-{digest[:12]}.zip"
     root.mkdir(parents=True, exist_ok=True)
-    archive.write_bytes(data)
-    with zipfile.ZipFile(archive) as bundle:
+    with zipfile.ZipFile(io.BytesIO(data)) as bundle:
         names = bundle.namelist()
-        if len(names) > 12000 or sum(info.file_size for info in bundle.infolist()) > 300 * 1024 * 1024:
-            raise ValueError("技能压缩包展开后过大")
+        entries = bundle.infolist()
+        if len(names) > 12000 or sum(info.file_size for info in entries) > 100 * 1024 * 1024:
+            raise ValueError("技能压缩包展开后超过 100 MB 或包含过多文件")
+        if any(info.file_size > max(info.compress_size, 1) * 200 for info in entries):
+            raise ValueError("技能压缩包压缩比例异常")
         if any(Path(name).is_absolute() or ".." in Path(name).parts for name in names):
             raise ValueError("Unsafe archive path")
         manifest_name = next((name for name in names if name.endswith("skill.json")), None)
@@ -90,7 +92,6 @@ def install_skill(data: bytes, root: Path, allow_scripts: bool = False) -> dict:
             (destination / "skill.json").write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
             )
-    archive.unlink(missing_ok=True)
     return {
         "id": skill_id,
         "version": version,

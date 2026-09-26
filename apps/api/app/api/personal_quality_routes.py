@@ -5,18 +5,18 @@ import json
 from pathlib import Path
 from typing import Literal
 
+from app.api.dependencies import project_or_404
+from app.db.models import DeliveryVerification, PersonalBinding, PersonalComparison
+from app.db.session import get_db
+from app.personalization import service
+from app.personalization.runtime import assert_current, generation_snapshot, lock
+from app.presentation_engine.service import presentation_engine
+from app.security.uploads import read_upload_limited
+from app.slides import load_slides
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import select
-
-from app.api.dependencies import project_or_404
-from app.db.models import PersonalBinding, PersonalComparison, DeliveryVerification
-from app.db.session import get_db
-from app.personalization import service
-from app.personalization.runtime import generation_snapshot, lock, assert_current
-from app.presentation_engine.service import presentation_engine
-from app.slides import load_slides
 
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(service.require_local)])
 
@@ -81,6 +81,8 @@ def comparison_file(project_id: str, comparison_id: str, label: Literal["A", "B"
     target = Path(project.artifact_path) / "personal-comparisons" / row.id / label / ("index.html" if format == "html" else "presentation.pptx")
     if not target.is_file():
         raise HTTPException(409, "请先生成 A/B 对照")
+    if format == "html" and "file:" in target.read_text(encoding="utf-8"):
+        raise HTTPException(413, "候选演示包含大体积音视频，请使用项目中的 HTML 媒体包导出")
     return FileResponse(target, filename=f"candidate-{label}.{format}")
 
 
@@ -107,8 +109,8 @@ def review_comparison(project_id: str, comparison_id: str, body: ComparisonRevie
 
 @router.post("/projects/{project_id}/external-feedback")
 async def external_feedback(project_id: str, file: UploadFile = File(...), db=Depends(get_db)):
-    from app.personalization.roundtrip_learning import compare_external
     from app.personalization.reference import extract_reference
+    from app.personalization.roundtrip_learning import compare_external
     project = project_or_404(project_id, db)
     owner = service.identity(db)
     binding = db.get(PersonalBinding, project_id)
@@ -117,7 +119,7 @@ async def external_feedback(project_id: str, file: UploadFile = File(...), db=De
     original = Path(project.artifact_path) / "exports" / "presentation.pptx"
     if not original.is_file():
         raise HTTPException(409, "请先从映章导出原始 PPTX，再上传修改稿")
-    data = await file.read(20 * 1024 * 1024 + 1)
+    data = await read_upload_limited(file, 20 * 1024 * 1024, "外部修改稿")
     alignment = compare_external(original.read_bytes(), data, project_id)
     before, _ = extract_reference(original.read_bytes())
     after, _ = extract_reference(data)
@@ -227,8 +229,8 @@ async def upload_desktop_pdf(project_id: str, file: UploadFile = File(...),
     target = Path(project.artifact_path) / "exports" / "presentation.pptx"
     if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != file_hash:
         raise HTTPException(409, "PPTX 已更新，请下载最新草稿后重新生成验收 PDF")
-    data = await file.read(30 * 1024 * 1024 + 1)
-    if len(data) > 30 * 1024 * 1024 or not data.startswith(b"%PDF-"):
+    data = await read_upload_limited(file, 30 * 1024 * 1024, "验收 PDF")
+    if not data.startswith(b"%PDF-"):
         raise HTTPException(422, "请选择不超过 30 MB 的 PDF")
     row = DeliveryVerification(project_id=project_id, file_hash=file_hash, software=software)
     db.add(row)

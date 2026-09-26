@@ -449,6 +449,16 @@ def _fit_bullets(points: list[str], budget: int = 430) -> list[str]:
         text = str(point).strip()
         if not text:
             continue
+        if re.search(
+            r"[+\-−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*(?:%|个百分点|倍|万|亿|ms|毫秒|秒|分|分钟|小时|KB|MB|GB|TB|条|个|项|份|人|页)?",
+            text,
+            flags=re.IGNORECASE,
+        ):
+            # Punctuation trimming must not split thousands separators or
+            # detach a result from its evidence; density validation can flag it.
+            result.append(text)
+            used += len(text)
+            continue
         if len(text) > 84:
             sentence = re.split(r"[。！？；;]", text, maxsplit=1)[0].strip()
             if 18 <= len(sentence) <= 84:

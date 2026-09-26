@@ -18,6 +18,7 @@ from app.db.models import (
 from app.db.session import get_db
 from app.presentation_intelligence.brand_kit import compile_brand_kit
 from app.presentation_intelligence.research_assets import build_research_manifest, discover_research
+from app.security.uploads import read_upload_limited
 from app.slides import load_slides
 from app.sources import load_sources
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -124,7 +125,7 @@ async def register_licensed_asset(
         root = Path(project.artifact_path) / "assets" / "licensed"
         root.mkdir(parents=True, exist_ok=True)
         target = root / f"{secrets.token_hex(8)}{suffix}"
-        target.write_bytes(await file.read())
+        target.write_bytes(await read_upload_limited(file, 50 * 1024 * 1024, "素材文件"))
         artifact_path = str(target)
     row = LicensedAsset(
         project_id=project_id, name=name.strip(), kind=kind.strip()[:40], provider=provider.strip()[:120],
@@ -186,7 +187,7 @@ async def upload_brand_asset(
     root = Path(project.artifact_path) / "assets" / "brand"
     root.mkdir(parents=True, exist_ok=True)
     target = root / f"{secrets.token_hex(8)}{suffix}"
-    target.write_bytes(await file.read())
+    target.write_bytes(await read_upload_limited(file, 50 * 1024 * 1024, "品牌资产"))
     try:
         metadata_json = json.loads(metadata or "{}")
     except json.JSONDecodeError as exc:
@@ -253,6 +254,5 @@ def update_brand_kit(project_id: str, body: BrandKitRequest, db: Session = Depen
         slide_row.spec = spec
     db.commit()
     return design["brandKit"]
-
 
 

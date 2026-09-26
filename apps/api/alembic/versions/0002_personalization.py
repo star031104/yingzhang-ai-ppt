@@ -25,7 +25,5 @@ def upgrade():
 
 
 def downgrade():
-    from app.db.models import Base
-
-    for name in reversed(TABLES):
-        Base.metadata.tables[name].drop(op.get_bind(), checkfirst=True)
+    # Personal preferences can contain user-authored data; keep them on rollback.
+    return None

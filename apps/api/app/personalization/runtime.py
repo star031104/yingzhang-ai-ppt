@@ -3,10 +3,11 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
-from app.personalization.process_lock import WorkspaceLock
 
 from fastapi import HTTPException
 from sqlalchemy import select
+
+from app.personalization.process_lock import WorkspaceLock
 
 lock = WorkspaceLock()
 generation_snapshot: ContextVar[dict | None] = ContextVar("personal_generation", default=None)
@@ -58,6 +59,7 @@ def guarded_generation(function):
     async def wrapped(project_id, *args, **kwargs):
         from app.db.models import PersonalBinding
         from app.db.session import SessionLocal
+        from app.providers.usage import usage_project_id
 
         inherited = generation_snapshot.get()
         with SessionLocal() as db:
@@ -66,12 +68,14 @@ def guarded_generation(function):
                 binding.snapshot if binding and function.__name__ != "_plan_project_core" else None
             )
         token = generation_snapshot.set(snapshot)
+        usage_token = usage_project_id.set(project_id)
         try:
             assert_current()
             result = await function(project_id, *args, **kwargs)
             assert_current()
             return result
         finally:
+            usage_project_id.reset(usage_token)
             generation_snapshot.reset(token)
 
     return wrapped

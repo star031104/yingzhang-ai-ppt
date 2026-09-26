@@ -106,7 +106,7 @@ def test_fixed_suite_and_blind_review_workflow(client, tmp_path):
     run = client.post(f"/api/v1/projects/{project['id']}/evaluations")
     assert run.status_code == 201
     payload = run.json()
-    assert payload["metrics"]["fixedCasesTotal"] == 11
+    assert payload["metrics"]["fixedCasesTotal"] + payload["metrics"]["fixedCasesNotApplicable"] + payload["metrics"]["fixedCasesNotVerified"] == 11
     assert payload["suite"] == "professional-fixed-v2"
     assert payload["metrics"]["blindReady"] is True
     token = payload["blindToken"]

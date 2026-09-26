@@ -13,6 +13,7 @@ from app.db.models import (
     ImportedDeck,
     Job,
     LicensedAsset,
+    ModelUsageRecord,
     ProjectMember,
     PublishedDeck,
     SlideCandidate,
@@ -29,12 +30,49 @@ from app.skills.project import load_project_skills, set_project_skills
 from app.slides import load_slides
 from app.sources import load_sources
 from app.validation.visual_regression import compare_render_roots
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/api/v1")
+
+
+@router.get("/projects/{project_id}/storage")
+def project_storage(project_id: str, db: Session = Depends(get_db)):
+    project = project_or_404(project_id, db)
+    root = Path(project.artifact_path).resolve()
+    groups = {
+        name: {"bytes": 0, "files": 0}
+        for name in ("exports", "evaluations", "published", "assets", "slides", "other")
+    }
+    total_bytes = 0
+    total_files = 0
+    if root.is_dir():
+        for path in root.rglob("*"):
+            try:
+                if not path.is_file() or path.is_symlink():
+                    continue
+                relative = path.relative_to(root)
+                group = relative.parts[0] if relative.parts and relative.parts[0] in groups else "other"
+                size = path.stat().st_size
+            except OSError:
+                continue
+            groups[group]["bytes"] += size
+            groups[group]["files"] += 1
+            total_bytes += size
+            total_files += 1
+    volume_probe = root
+    while not volume_probe.exists() and volume_probe != volume_probe.parent:
+        volume_probe = volume_probe.parent
+    disk = shutil.disk_usage(volume_probe)
+    return {
+        "totalBytes": total_bytes,
+        "totalFiles": total_files,
+        "freeBytes": disk.free,
+        "backupIncludesAllArtifacts": True,
+        "groups": groups,
+    }
 
 
 class ProjectSkillsRequest(BaseModel):
@@ -47,7 +85,7 @@ class VisualRegressionRequest(BaseModel):
 
 
 @router.get("/projects/{project_id}/workspace")
-def get_project_workspace(project_id: str, db: Session = Depends(get_db)):
+def get_project_workspace(project_id: str, request: Request, db: Session = Depends(get_db)):
     from app.config import settings
     from app.db.models import PersonalBinding, PersonalProfile
     from app.personalization.service import describe
@@ -89,12 +127,32 @@ def get_project_workspace(project_id: str, db: Session = Depends(get_db)):
             .order_by(EvaluationRun.created_at.desc())
         )
     )
+    usage_rows = db.execute(
+        select(
+            ModelUsageRecord.model_id,
+            func.sum(ModelUsageRecord.input_tokens),
+            func.sum(ModelUsageRecord.output_tokens),
+            func.sum(ModelUsageRecord.request_count),
+            func.sum(ModelUsageRecord.usage_requests),
+            func.sum(ModelUsageRecord.unreported_requests),
+        )
+        .where(ModelUsageRecord.project_id == project_id)
+        .group_by(ModelUsageRecord.model_id)
+        .order_by(ModelUsageRecord.model_id)
+    ).all()
+    model_usage = [
+        {"model": model, "inputTokens": input_count, "outputTokens": output_count,
+         "requests": request_count or 0, "reportedRequests": reported_requests or 0,
+         "unreportedRequests": unreported_requests or 0}
+        for model, input_count, output_count, request_count, reported_requests, unreported_requests in usage_rows
+    ]
     plan_options = copy.deepcopy((deck.reproducibility or {}).get("request", {})) if deck else {}
     binding = db.get(PersonalBinding, project_id) if not settings.public_test_mode else None
     personal_profile = db.get(PersonalProfile, binding.profile_id) if binding else None
     if personal_profile:
         plan_options.setdefault("professionalBrief", {}).update({"profileId": personal_profile.id, "profileRevision": personal_profile.revision})
     return {
+        "projectRole": getattr(request.state, "project_role", "owner"),
         "personalizationAvailable": not settings.public_test_mode,
         "personalization": describe(binding.snapshot if binding else None) if not settings.public_test_mode else {"active": False, "rules": []},
         "project": {
@@ -107,6 +165,16 @@ def get_project_workspace(project_id: str, db: Session = Depends(get_db)):
         "planOptions": plan_options,
         "orchestration": (deck.reproducibility or {}).get("orchestration", {}) if deck else {},
         "modelPlanning": (deck.reproducibility or {}).get("model", {}) if deck else {},
+        "modelUsage": {
+            "inputTokens": sum(item["inputTokens"] or 0 for item in model_usage) if any(item["inputTokens"] is not None for item in model_usage) else None,
+            "outputTokens": sum(item["outputTokens"] or 0 for item in model_usage) if any(item["outputTokens"] is not None for item in model_usage) else None,
+            "requests": sum(item["requests"] for item in model_usage),
+            "reportedRequests": sum(item["reportedRequests"] for item in model_usage),
+            "unreportedRequests": sum(item["unreportedRequests"] for item in model_usage),
+            "models": model_usage,
+            "source": "provider-reported",
+            "costAvailable": False,
+        },
         "gates": (deck.reproducibility or {}).get("gates", {"enabled": False, "outline": "approved", "sample": "approved"}) if deck else None,
         "slides": slide_views,
         "candidates": [
@@ -225,7 +293,8 @@ def visual_regression(
     current_root.mkdir(parents=True, exist_ok=True)
     for stale in current_root.glob("*.png"):
         stale.unlink()
-    for slide in load_slides(project_id, db):
+    slides = load_slides(project_id, db)
+    for slide in slides:
         slide_root = rendered / str(slide["position"])
         current_path = slide_root / "current.json"
         if not current_path.is_file():
@@ -234,6 +303,22 @@ def visual_regression(
         image_path = slide_root / f"{selected['variant']}.png"
         if image_path.is_file():
             shutil.copy2(image_path, current_root / f"slide-{slide['position']:02d}.png")
+    expected = {int(slide["position"]) for slide in slides}
+    actual = {
+        int(path.stem.removeprefix("slide-"))
+        for path in current_root.glob("slide-*.png")
+        if path.stem.removeprefix("slide-").isdigit()
+    }
+    missing = sorted(expected - actual)
+    if not expected or missing:
+        raise HTTPException(
+            409,
+            {
+                "message": "页面渲染不完整，无法建立或比较视觉基线",
+                "expectedSlides": len(expected),
+                "missingPositions": missing,
+            },
+        )
     if body.accept_current or not baseline_root.is_dir() or not any(baseline_root.glob("*.png")):
         baseline_root.mkdir(parents=True, exist_ok=True)
         for stale in baseline_root.glob("*.png"):

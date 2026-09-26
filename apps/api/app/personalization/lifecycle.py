@@ -2,9 +2,21 @@ import copy
 
 from sqlalchemy import delete, select
 
-from app.db.models import DeckSpecRecord, Job, ProjectOwner, PersonalBinding, PersonalIdentity, PersonalMemory, PersonalOutbox, PersonalComparison, Project, SlideSpecRecord, SlideVersion
-from app.personalization.data_management import scrub_personal_hints, scrub_project_cache
 from app.config import settings
+from app.db.models import (
+    DeckSpecRecord,
+    Job,
+    PersonalBinding,
+    PersonalComparison,
+    PersonalIdentity,
+    PersonalMemory,
+    PersonalOutbox,
+    Project,
+    ProjectOwner,
+    SlideSpecRecord,
+    SlideVersion,
+)
+from app.personalization.data_management import scrub_personal_hints, scrub_project_cache
 
 
 def delete_derived_rules(db, profile, source_ids):
@@ -39,8 +51,8 @@ def invalidate_profile(db, profile):
         if (not settings.private_accounts_mode or (job_owner and job_owner.owner_id == owner.id)) and (job.checkpoint or {}).get("workflow", {}).get("personalizationEpoch"):
             job.status = "cancelled"
             job.checkpoint = {"stage": "cancelled", "label": "经验来源已删除", "cancelRequested": True, "workflow": {"resumable": False}}
-    from app.personalization.service import freeze
     from app.db.models import PersonalProfile
+    from app.personalization.service import freeze
     for binding in db.scalars(select(PersonalBinding).where(PersonalBinding.owner_id == owner.id, PersonalBinding.profile_id != profile.id)):
         config = db.get(PersonalProfile, binding.profile_id)
         if config:

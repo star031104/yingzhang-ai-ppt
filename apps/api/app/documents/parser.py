@@ -1,11 +1,14 @@
 import csv
 import hashlib
 import io
+import math
 import re
+import shutil
+import subprocess
 from collections import Counter
 from pathlib import Path
 
-import fitz
+import pymupdf as fitz
 from bs4 import BeautifulSoup
 from openpyxl import load_workbook
 from PIL import Image
@@ -14,7 +17,39 @@ from pptx import Presentation
 from app.documents.structure import parse_docx_structure, table_record, table_text
 from app.intelligence.content_selection import section_understanding
 
-PARSER_VERSION = "5.5"
+PARSER_VERSION = "5.6"
+
+
+def _ocr_text(image_data: bytes) -> tuple[str, str | None]:
+    """Run optional local Tesseract OCR; never send source images to a service."""
+    from app.config import settings
+
+    executable = settings.ocr_executable or shutil.which("tesseract")
+    if not executable:
+        return "", "未检测到 Tesseract；如需识别扫描件，请安装 Tesseract 并配置 chi_sim 语言数据后重新上传"
+    try:
+        result = subprocess.run(
+            [executable, "stdin", "stdout", "-l", settings.ocr_languages, "--psm", "3"],
+            input=image_data,
+            capture_output=True,
+            timeout=45,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return "", "本地 OCR 超时；请拆分较大的扫描文档后重试"
+    except OSError as exc:
+        return "", f"无法启动本地 OCR：{str(exc)[:160]}"
+    if result.returncode:
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        return "", f"本地 OCR 失败：{detail[:160] or 'Tesseract 返回错误'}"
+    text = result.stdout.decode("utf-8", errors="replace").strip()
+    return text, None if text else "本地 OCR 未识别到文字"
+
+
+def _page_png(page) -> bytes:
+    scale = min(2.0, math.sqrt(16_000_000 / max(1, page.rect.width * page.rect.height)))
+    pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+    return pixmap.tobytes("png")
 
 
 def _aligned_metric_tables(page, captions):
@@ -168,8 +203,10 @@ def _pdf_page_title(page: fitz.Page, page_number: int) -> str:
     return selected[2][:80]
 
 
-def _pdf_page_sections(page: fitz.Page, page_number: int, start_index: int, exclude_rects: list | None = None, previous_heading: str | None = None) -> list[dict]:
-    if exclude_rects:
+def _pdf_page_sections(page: fitz.Page, page_number: int, start_index: int, exclude_rects: list | None = None, previous_heading: str | None = None, page_text: str | None = None) -> list[dict]:
+    if page_text is not None:
+        raw_lines = page_text.splitlines()
+    elif exclude_rects:
         raw_lines = []
         for block in page.get_text("dict").get("blocks", []):
             for line in block.get("lines", []):
@@ -183,7 +220,7 @@ def _pdf_page_sections(page: fitz.Page, page_number: int, start_index: int, excl
         cleaned for line in raw_lines
         if (cleaned := _clean_caption(line)) and not _is_page_marker(cleaned)
     ]
-    visual_headings = _pdf_visual_headings(page)
+    visual_headings = _pdf_visual_headings(page) if page_text is None else []
     heading_re = re.compile(
         r"^(?:第\s*[一二三四五六七八九十\d]+\s*[章节]\s*)?"
         r"(?:\d+(?:\.\d+){1,3}\s+)?"
@@ -487,10 +524,23 @@ def parse_source(
     sections, figures, tables, warnings = [], [], [], []
     if suffix == ".pdf":
         pdf = fitz.open(stream=data, filetype="pdf")
+        ocr_page_count = 0
+        from app.config import settings
         for index, page in enumerate(pdf, 1):
             page_text = page.get_text()
+            ocr_used = False
             if len(re.sub(r"\s", "", page_text)) < 20:
-                warnings.append({"code": "ocr-required", "page": index, "message": f"第 {index} 页缺少可读取文字，需要文字识别或补充文本"})
+                if ocr_page_count >= max(0, settings.ocr_max_pages):
+                    page_text, ocr_error = "", f"已达到每份 PDF {settings.ocr_max_pages} 页的本机 OCR 上限；请拆分文件后重试"
+                else:
+                    ocr_page_count += 1
+                    page_text, ocr_error = _ocr_text(_page_png(page))
+                if page_text:
+                    ocr_used = True
+                    warnings.append({"code": "ocr-completed", "page": index, "message": f"第 {index} 页已用本机 OCR 识别；请核对识别文字与数字"})
+                else:
+                    warnings.append({"code": "ocr-required", "page": index,
+                                     "message": f"第 {index} 页缺少可读取文字；{ocr_error or '需要文字识别或补充文本'}"})
             figures.extend(_extract_pdf_figures(page, index, name, asset_dir))
             captions = _caption_blocks(page, TABLE_CAPTION_RE)
             try:
@@ -504,7 +554,11 @@ def parse_source(
                 warnings.append({"code": "contents-page-skipped", "page": index, "message": f"第 {index} 页为目录，已从正文证据中排除"})
                 continue
             previous_section = sections[-1] if sections else None
-            page_sections = _pdf_page_sections(page, index, len(sections) + 1, [table.bbox for table in detected], previous_section["title"] if previous_section else None)
+            page_sections = _pdf_page_sections(
+                page, index, len(sections) + 1, [table.bbox for table in detected],
+                previous_section["title"] if previous_section else None,
+                page_text if ocr_used else None,
+            )
             sections.extend(page_sections)
             for detected_table in detected:
                 rows = detected_table.extract()
@@ -581,12 +635,28 @@ def parse_source(
             title = slide.shapes.title.text if slide.shapes.title else f"第 {index} 页幻灯片"
             sections.append(_section(index, title, "\n\n".join(paragraphs), index))
     elif suffix in {".png", ".jpg", ".jpeg", ".webp"}:
-        image = Image.open(io.BytesIO(data))
-        figures.append(
-            {"name": name, "width": image.width, "height": image.height, "mode": image.mode}
-        )
-        sections.append(_section(1, name, f"图片尺寸 {image.width}×{image.height}"))
-        warnings.append({"code": "ocr-required", "message": "已读取图片尺寸；图中文字与数据尚未识别，请补充文本或可读取的文档"})
+        with Image.open(io.BytesIO(data)) as image:
+            figures.append(
+                {"name": name, "width": image.width, "height": image.height, "mode": image.mode}
+            )
+            ocr_image = image.convert("RGB")
+            scale = min(1.0, 4000 / max(image.width, image.height),
+                        math.sqrt(16_000_000 / max(1, image.width * image.height)))
+            if scale < 1:
+                ocr_image = ocr_image.resize(
+                    (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
+                    Image.Resampling.LANCZOS,
+                )
+            image_buffer = io.BytesIO()
+            ocr_image.save(image_buffer, format="PNG")
+            image_width, image_height = image.size
+        recognized, ocr_error = _ocr_text(image_buffer.getvalue())
+        if recognized:
+            sections.append(_section(1, name, recognized, 1))
+            warnings.append({"code": "ocr-completed", "message": "图片文字已用本机 OCR 识别；请核对识别文字与数字"})
+        else:
+            sections.append(_section(1, name, f"图片尺寸 {image_width}×{image_height}"))
+            warnings.append({"code": "ocr-required", "message": ocr_error or "图片文字与数据尚未识别，请补充文本或可读取的文档"})
     elif suffix in {".html", ".htm"}:
         soup = BeautifulSoup(data, "html.parser")
         for node in soup(["script", "style"]):

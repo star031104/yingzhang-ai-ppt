@@ -190,7 +190,7 @@ export function CreatePage({
           {projectId && (
             <div className="export-bar">
               <p>导出成果</p>
-              <a href={exportUrl(projectId, "html")}>HTML</a>
+              <a href={exportUrl(projectId, "html")}>网页演示 / 媒体包</a>
               <a href={exportUrl(projectId, "pptx")}>PPTX</a>
               <a href={exportUrl(projectId, "pdf")}>PDF</a>
             </div>

@@ -45,7 +45,7 @@ def render_office(source: Path, output: Path, software="libreoffice"):
                 return {"status": "unavailable", "software": software, "fileHash": source_hash, "message": "本机未找到 LibreOffice"}
             profile = (output / "office-profile").as_uri()
             result = subprocess.run([executable, f"-env:UserInstallation={profile}", "--headless", "--convert-to", "pdf", "--outdir", str(output), str(source)],
-                                    capture_output=True, timeout=180, creationflags=flags)
+                                    capture_output=True, timeout=180, creationflags=flags, check=False)
         elif software in {"powerpoint-windows", "wps"} and os.name == "nt":
             progid = "PowerPoint.Application" if software == "powerpoint-windows" else "KWPP.Application"
             if not registered_office(progid):
@@ -77,7 +77,7 @@ try {
                    "YZ_OFFICE_PROGID": "PowerPoint.Application" if software == "powerpoint-windows" else "KWPP.Application",
                    "YZ_OFFICE_PROCESS": "POWERPNT" if software == "powerpoint-windows" else "wpp"}
             result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-File", str(script)],
-                                    env=env, capture_output=True, timeout=180, creationflags=flags)
+                                    env=env, capture_output=True, timeout=180, creationflags=flags, check=False)
         else:
             return {"status": "unavailable", "software": software, "fileHash": source_hash, "message": "本机不支持该桌面软件的自动化，请使用手工验收"}
         if result.returncode or not pdf.is_file():

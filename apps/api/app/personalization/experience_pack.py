@@ -60,7 +60,7 @@ def validate_pack(payload):
         ) or any(not isinstance(role, str) for role in features["roleSequence"]):
             raise ValueError("案例页型不合法")
         if not isinstance(features.get("rules", {}), dict):
-            raise ValueError("案例规则格式错误")
+            raise TypeError("案例规则格式错误")
         for key, value in features.get("rules", {}).items():
             validate_preference(key, value)
         if any(type(features.get(key)) is not int or not 0 <= features[key] <= 10000 for key in ("slideCount", "averageTitleLength")):
@@ -75,7 +75,7 @@ def validate_pack(payload):
         if not isinstance(reference["name"], str) or not 1 <= len(reference["name"].strip()) <= 200:
             raise ValueError("模板名称不合法")
         if not isinstance(reference["pptx"], str) or not isinstance(reference["sha256"], str):
-            raise ValueError("模板文件格式错误")
+            raise TypeError("模板文件格式错误")
         data = base64.b64decode(reference["pptx"], validate=True)
         validate_pptx(data)
         if hashlib.sha256(data).hexdigest() != reference["sha256"]:

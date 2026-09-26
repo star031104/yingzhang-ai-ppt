@@ -1,11 +1,13 @@
+import os
 from contextlib import asynccontextmanager
+from multiprocessing import current_process
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.orm.exc import StaleDataError
 
-from app.security.accounts import router as accounts_router
 from app.api.asset_routes import router as asset_router
 from app.api.delivery_routes import router as delivery_router
 from app.api.governance_routes import router as governance_router
@@ -23,6 +25,8 @@ from app.api.workflow_routes import router as workflow_router
 from app.config import settings
 from app.db.session import create_schema
 from app.jobs.manager import job_manager
+from app.runtime.process_guard import ServiceProcessGuard
+from app.security.accounts import router as accounts_router
 from app.security.public_access import (
     public_access_middleware,
     validate_public_config,
@@ -30,18 +34,29 @@ from app.security.public_access import (
 from app.security.public_access import (
     router as public_access_router,
 )
+from app.security.request_size import RequestBodyLimitMiddleware
 from app.skills.catalog import seed_visual_skill_catalog
 
 
 @asynccontextmanager
 async def lifespan(_):
-    if settings.private_accounts_mode and settings.public_test_mode:
-        raise RuntimeError("独立账号模式不能与共享测试模式同时启用")
-    validate_public_config()
-    create_schema()
-    seed_visual_skill_catalog()
-    job_manager.recover_interrupted()
-    yield
+    worker_count = os.getenv("WEB_CONCURRENCY") or os.getenv("UVICORN_WORKERS") or "1"
+    try:
+        multiple_workers = int(worker_count) > 1
+    except ValueError:
+        multiple_workers = True
+    if multiple_workers or current_process().name != "MainProcess":
+        raise RuntimeError(
+            "当前任务执行器只支持单进程、单实例运行；多进程/多副本部署前需要配置共享任务队列。"
+        )
+    with ServiceProcessGuard(settings.artifact_root):
+        if settings.private_accounts_mode and settings.public_test_mode:
+            raise RuntimeError("独立账号模式不能与共享测试模式同时启用")
+        validate_public_config()
+        create_schema()
+        seed_visual_skill_catalog()
+        job_manager.recover_interrupted()
+        yield
 
 
 app = FastAPI(
@@ -52,6 +67,21 @@ app = FastAPI(
     docs_url=None if settings.public_test_mode else "/docs",
     redoc_url=None if settings.public_test_mode else "/redoc",
 )
+
+
+@app.exception_handler(StaleDataError)
+async def stale_write_handler(_, exc: StaleDataError):
+    return JSONResponse(
+        status_code=409,
+        content={
+            "detail": {
+                "code": "concurrent_update_conflict",
+                "message": "页面在保存期间已被其他操作更新，请刷新后重试",
+            }
+        },
+    )
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -76,6 +106,7 @@ app.include_router(source_router)
 app.include_router(workflow_router)
 app.include_router(public_access_router)
 app.middleware("http")(public_access_middleware)
+app.add_middleware(RequestBodyLimitMiddleware)
 
 web_root = settings.web_dist_root.resolve()
 if web_root.is_dir():

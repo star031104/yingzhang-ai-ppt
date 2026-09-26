@@ -124,8 +124,15 @@ def update_slide_canvas_layout(
 
 
 @router.post("/projects/{project_id}/slides/{slide_id}/rollback/{version}")
-def rollback_slide(project_id: str, slide_id: str, version: int, db: Session = Depends(get_db)):
+def rollback_slide(
+    project_id: str,
+    slide_id: str,
+    version: int,
+    revision: int | None = None,
+    db: Session = Depends(get_db),
+):
     slide = project_slide_or_404(project_id, slide_id, db)
+    ensure_slide_revision(slide, revision)
     target = db.scalar(
         select(SlideVersion).where(
             SlideVersion.slide_id == slide_id,

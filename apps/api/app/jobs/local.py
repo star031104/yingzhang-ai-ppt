@@ -5,6 +5,7 @@ from collections import defaultdict
 from collections.abc import AsyncIterator, Awaitable
 from typing import Any
 
+from app.config import settings
 from app.db.models import Job
 from app.db.session import SessionLocal
 from app.jobs.contracts import JobSnapshot
@@ -34,7 +35,11 @@ class SQLiteJobStore:
 
     def list_active(self) -> list[JobSnapshot]:
         with SessionLocal() as db:
-            jobs = db.scalars(select(Job).where(Job.status.in_({"running", "queued"}))).all()
+            jobs = db.scalars(
+                select(Job)
+                .where(Job.status.in_({"running", "queued"}))
+                .order_by(Job.created_at, Job.id)
+            ).all()
             return [job_snapshot(job) for job in jobs]
 
     def save(self, snapshot: JobSnapshot) -> JobSnapshot | None:
@@ -56,11 +61,27 @@ class AsyncioJobExecutor:
     def __init__(self) -> None:
         self.tasks: set[asyncio.Task[Any]] = set()
         self.tasks_by_job: dict[str, asyncio.Task[Any]] = {}
+        self.max_running = settings.max_concurrent_jobs
+        self.max_waiting = settings.max_queued_jobs
+        self._semaphore = asyncio.Semaphore(self.max_running)
+
+    def has_capacity(self) -> bool:
+        return len(self.tasks) < self.max_running + self.max_waiting
 
     def submit(
         self, coroutine: Awaitable[Any], job_id: str | None = None
     ) -> asyncio.Task[Any]:
-        task = asyncio.create_task(coroutine)
+        if not self.has_capacity():
+            close = getattr(coroutine, "close", None)
+            if close:
+                close()
+            raise RuntimeError("本机任务队列已满")
+
+        async def bounded() -> Any:
+            async with self._semaphore:
+                return await coroutine
+
+        task = asyncio.create_task(bounded())
         self.tasks.add(task)
         if job_id:
             self.tasks_by_job[job_id] = task

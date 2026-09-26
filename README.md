@@ -14,7 +14,7 @@
 
 从 PDF、Word、Excel、PPTX、Markdown、网页和图片中提取结构与证据，完成叙事规划、逐页生成、质量检查，并交付 HTML、PDF 与原生可编辑 PPTX。
 
-[功能概览](#功能概览) · [快速开始](#快速开始) · [部署说明](#部署说明) · [使用指南](#使用指南) · [安全与隐私](#安全与隐私)
+[功能概览](#功能概览) · [快速开始](#快速开始) · [部署说明](#部署说明) · [使用指南](#使用指南) · [工程架构](docs/architecture.md) · [开发报告](docs/development-report.md)
 
 </div>
 
@@ -134,11 +134,10 @@ python -m venv .venv
 source .venv/bin/activate
 ```
 
-安装依赖：
+使用锁定依赖安装开发环境：
 
 ```bash
-python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+uv sync --locked --extra dev
 npm ci
 npx playwright install chromium
 ```
@@ -159,7 +158,7 @@ cp .env.example .env
 
 ```bash
 npm run build
-python -m uvicorn app.main:app --app-dir apps/api --host 127.0.0.1 --port 8000
+uv run --locked python -m uvicorn app.main:app --app-dir apps/api --host 127.0.0.1 --port 8000
 ```
 
 打开：
@@ -177,9 +176,17 @@ python -m uvicorn app.main:app --app-dir apps/api --host 127.0.0.1 --port 8000
 ```bash
 npm ci
 npm run build
-python -m pip install -e .
-python -m uvicorn app.main:app --app-dir apps/api --host 127.0.0.1 --port 8000
+uv sync --locked
+uv run --locked python -m uvicorn app.main:app --app-dir apps/api --host 127.0.0.1 --port 8000
 ```
+
+应用启动时默认执行 Alembic `upgrade head`，随后核对数据库表和字段；结构不匹配时会明确停止启动，避免应用带着不完整结构运行。升级已有数据库前仍应先备份。多进程或多副本部署应在发布阶段单独执行 `python -m alembic -c apps/api/alembic.ini upgrade head`，再设置 `SLIDEFORGE_MIGRATE_ON_STARTUP=false`，避免多个服务实例同时运行迁移。0005 之后的模式快照是静态契约；未来模型变更必须新增前向迁移。
+
+数据库与上传/生成文件需要作为一个工作区共同备份。停止应用后，使用 `python scripts/backup_workspace.py create runtime/backups/workspace.zip` 创建快照，使用 `python scripts/backup_workspace.py verify runtime/backups/workspace.zip` 校验完整性。恢复前保持应用停止，再执行 `python scripts/backup_workspace.py restore runtime/backups/workspace.zip --confirm`；恢复前会额外保存当前工作区副本。备份包请放在数据库和产物目录之外，并另行复制到安全位置。
+
+当前内置任务执行器只支持单进程、单实例。应用会在检测到常见多 worker 配置时拒绝启动；多实例任务执行需要先部署共享队列与原子任务租约。单实例的并发执行数和等待队列容量可用 `SLIDEFORGE_MAX_CONCURRENT_JOBS` 与 `SLIDEFORGE_MAX_QUEUED_JOBS` 调整，队列满时 API 返回 503。反向代理部署时仅在应用端口禁止绕过代理直连的情况下配置 `SLIDEFORGE_TRUSTED_PROXY_IPS`，填写代理源地址或 CIDR，并使用 `uvicorn --no-proxy-headers` 保留应用所见的直接连接地址；转发头不在该信任范围内时不会用于限流识别。共享公网模式的生成限额按来源 IP 计算，治理操作仅管理员可执行。
+
+启用独立账号后，项目成员需填写已启用账号的登录名称；项目角色会限制查看、编辑、上传、审批、发布和撤销操作。最终批准会记录当前页面数据和渲染文件的摘要，发布时必须与批准版本一致；修改后需重新审批。
 
 默认监听 `127.0.0.1`，仅当前电脑可访问。若要提供局域网或公网访问，需要自行配置反向代理、HTTPS、访问控制和防火墙，并在公开前完整审阅安全设置。首版不建议直接裸露 Uvicorn 端口。
 
@@ -206,15 +213,33 @@ npm run dev
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `SLIDEFORGE_DATABASE_URL` | `sqlite:///./runtime/data/yingzhang.db` | 本地数据库地址 |
+| `SLIDEFORGE_MIGRATE_ON_STARTUP` | `true` | 启动时应用 Alembic 迁移；多副本部署应在发布阶段单独迁移并关闭 |
 | `SLIDEFORGE_ARTIFACT_ROOT` | `./runtime/artifacts` | 上传材料和生成产物目录 |
 | `SLIDEFORGE_CORS_ORIGINS` | 本地 5173 地址 | 开发环境允许的前端来源 |
-| `SLIDEFORGE_RENDER_CONCURRENCY` | `2` | 同时渲染的页面数，低内存设备建议设为 1 |
+| `SLIDEFORGE_RENDER_CONCURRENCY` | `2` | 单个演示任务同时渲染的页面数，低内存设备建议设为 1 |
+| `SLIDEFORGE_MAX_CONCURRENT_JOBS` | `2` | 同时执行的后台任务数，范围 1–16 |
+| `SLIDEFORGE_MAX_QUEUED_JOBS` | `6` | 后台等待任务上限，超过后 API 返回 503，范围 0–64 |
 | `SLIDEFORGE_OPTIONAL_IMAGE_WAIT_SECONDS` | `45` | 可选远程配图的单轮等待时间 |
 | `SLIDEFORGE_LOCAL_ONLY_MODE` | `false` | 设为 `true` 后仅允许连接本机模型服务 |
+| `SLIDEFORGE_PUBLIC_TEST_MODE` | `false` | 共享公网测试模式；启动公网隧道前必须启用并配置下列凭据 |
+| `SLIDEFORGE_PUBLIC_TEST_PASSWORD` | 未设置 | 测试者密码，至少 10 位 |
+| `SLIDEFORGE_PUBLIC_ADMIN_PASSWORD` | 未设置 | 管理员密码，至少 12 位，且必须与测试者密码不同 |
+| `SLIDEFORGE_PUBLIC_SESSION_SECRET` | 未设置 | 会话签名密钥，至少 32 位 |
+| `SLIDEFORGE_PUBLIC_UPLOAD_LIMIT_MB` | `25` | 公网模式的请求体总上限；缺少 `Content-Length` 时同样生效 |
+| `SLIDEFORGE_TRUSTED_PROXY_IPS` | 未设置 | 仅用于限流的可信反向代理地址/CIDR |
 | `SLIDEFORGE_PRIVATE_ACCOUNTS_MODE` | `false` | 本地单用户场景保持关闭 |
 | `SLIDEFORGE_OFFICE_EXECUTABLE` | 自动发现 | 可选的 LibreOffice 可执行文件路径 |
+| `SLIDEFORGE_OCR_EXECUTABLE` | 自动发现 | 可选的本地 Tesseract 可执行文件路径；安装后可识别扫描 PDF 和图片 |
+| `SLIDEFORGE_OCR_LANGUAGES` | `chi_sim+eng` | Tesseract 语言包；默认识别简体中文和英文 |
+| `SLIDEFORGE_OCR_MAX_PAGES` | `20` | 每份 PDF 最多自动识别的扫描页数 |
 
-不要把真实密钥写入 `.env.example`。模型地址、API Key 和模型选择应在应用的“模型配置”页面中填写，凭据保存在当前设备。
+不要把真实密钥写入 `.env.example`。公网测试脚本会强制启用共享测试认证，并在建立隧道前检查未登录项目请求是否返回 401；如未配置不同的测试者/管理员密码和会话密钥，脚本会拒绝启动。模型地址、API Key 和模型选择应在应用的“模型配置”页面中填写，凭据保存在当前设备。
+
+上传限制在 HTTP 请求进入 multipart 解析之前执行，因此即使请求没有提供 `Content-Length`，也会在达到总上限时以 413 拒绝；本地模式的总请求体上限为 110 MiB，公开测试模式使用 `SLIDEFORGE_PUBLIC_UPLOAD_LIMIT_MB`。SQLite 启动连接会启用外键约束，并在启动时检查已有外键记录；发现历史不一致时会停止启动并列出待处理记录。
+
+Python 依赖使用 `uv.lock` 锁定。安装开发依赖请运行 `uv sync --locked --extra dev`；生产运行环境使用 `uv sync --locked`，并将锁文件与代码版本一起发布。
+
+Node 依赖使用 `package-lock.json` 锁定。PptxGenJS 4.0.1 仍声明依赖存在高危漏洞的 `image-size` 1.x，因此根目录暂时强制使用已修复的 2.0.4；PptxGenJS 当前打包代码没有调用该解析器，演示文稿导出和浏览器测试已覆盖此组合。上游更新依赖声明后应移除该覆盖；在此之前，`npm ls image-size` 可能因上游版本范围不匹配报告 `invalid`，以 `npm ci`、实际测试和 `npm audit --omit=dev --audit-level=high` 为发布检查。
 
 ## 使用指南
 
@@ -230,15 +255,19 @@ npm run dev
 
 模型服务需要提供 OpenAI-Compatible 接口。不同服务对模型列表、视觉输入、结构化输出和超时策略的支持并不完全相同。连接测试成功后，再用少量页面验证能力和成本。图片模型是可选项；未配置时，系统仍可使用材料原图、图表和内置视觉结构完成演示。
 
+扫描 PDF 与图片可选用本机 Tesseract 识别。安装 Tesseract 和对应语言数据后，系统会自动查找；也可以在 `.env` 中配置可执行文件、语言和每份 PDF 的识别页数上限。原始文件留在本机处理。OCR 结果会标记为需要人工核对，尤其是数字和表格；识别文字不会被当作已验证的表格结构。
+
 ### Office 兼容性
 
 PPTX 以原生可编辑为目标，但不同版本的 PowerPoint、WPS 和 LibreOffice 对字体、SVG、动画和文本度量存在差异。正式使用前请在目标 Office 环境中检查字体替换、换行、图表和媒体对象。
+
+CI 会由映章生成器根据学术、商业、数据和产品四类基准材料生成 PPTX，再在 LibreOffice 中执行 PPTX→PDF 往返渲染，核对页数与每页标题。此检查不代表 PowerPoint 与 WPS 的实机验收；专业评测只有在当前内容指纹对应的导出文件已通过至少两种软件的实际渲染和人工复核后，才会报告跨平台交付成功。
 
 ## 测试与质量检查
 
 ```bash
 # Python API、工作流与文档解析
-python -m pytest
+uv run --locked --extra dev python -m pytest
 
 # 前端组件
 npm run test:web
@@ -278,7 +307,8 @@ yingzhang-ai-ppt/
 ├─ benchmarks/                     渲染质量基准
 ├─ test-materials/                 可公开的验收材料
 ├─ tests/                          Python 自动化测试
-├─ docs/adr/                       架构决策记录
+├─ docs/architecture.md            当前工程架构与模块边界
+├─ docs/development-report.md      项目开发报告
 ├─ scripts/                        启动、验证与维护脚本
 ├─ .env.example                    安全的配置模板
 └─ 启动项目.cmd                    Windows 一键启动入口
@@ -316,7 +346,9 @@ Linux 环境若缺少系统依赖，可根据 Playwright 的提示安装依赖�
 
 ## 参与开发
 
-提交改动前，请至少运行与改动范围相关的测试，并避免提交任何真实材料、账户数据、API Key、运行数据库或生成结果。架构层面的重要变更应在 `docs/adr/` 中补充决策记录。
+提交改动前，请至少运行与改动范围相关的测试，并避免提交任何真实材料、账户数据、API Key、运行数据库或生成结果。架构层面的重要变更应同步更新 [当前工程架构](docs/architecture.md)。
+
+GitHub Actions 会在推送和 Pull Request 时运行后端测试、前端测试及生产构建。演示工作区会累计显示模型服务实际返回的输入/输出 token 数；不会保存提示词或模型回复。由于各服务商费率和计费口径不同，未配置可核对的费率前不会将 token 数换算成费用。
 
 ## 许可证
 

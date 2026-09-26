@@ -18,11 +18,13 @@ from app.db.models import (
     DeckSpecRecord,
     InstalledSkill,
     Job,
+    LicensedAsset,
     ModelConfig,
     Project,
     Provider,
     RoleAssignment,
     SlideCandidate,
+    SlideEditMessage,
     SlideSpecRecord,
     SlideVersion,
 )
@@ -30,10 +32,10 @@ from app.db.session import get_db
 from app.intelligence import extract_evidence_graph
 from app.intelligence.content_selection import (
     concise_source_context,
-    query_terms,
     retain_source_boundaries,
     section_understanding,
 )
+from app.intelligence.numeric_claims import strict_numbers
 from app.jobs.manager import job_manager
 from app.jobs.progress import job_view as _job_view
 from app.personalization import service as personal
@@ -43,6 +45,14 @@ from app.presentation_engine.page_pipeline import render_deck_pages
 from app.presentation_engine.service import EngineError, presentation_engine
 from app.presentation_intelligence.art_director import build_design_system
 from app.presentation_intelligence.assets import bind_source_figures, normalize_visual_intent
+from app.presentation_intelligence.content_claims import (
+    clean_audience_bullet,
+    fit_audience_bullet,
+    ranked_evidence_claims,
+    referenced_metric_claims,
+    sanitize_numeric_claims,
+    strip_internal_source_markers,
+)
 from app.presentation_intelligence.layout_planner import plan_deck_layouts
 from app.presentation_intelligence.planner import archetypes, evidence_bindings, plan_deck
 from app.presentation_intelligence.research_assets import build_research_manifest
@@ -75,7 +85,7 @@ from app.workflows.project_jobs import (
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -327,293 +337,6 @@ def academic_result_source_refs(responsibility: str, sources: list[dict]) -> lis
         {"document": source["name"], "section": section["id"], "page": section.get("page")}
         for section in source.get("sections", [])[start:start + 4]
     ]
-
-
-STRICT_NUMBER_PATTERN = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*(?:%|个百分点|倍|万|亿|ms|毫秒|秒|分|分钟|小时|KB|MB|GB|TB|条|个|项|份|人|页)?"
-
-
-def strict_numbers(text: str) -> set[str]:
-    cleaned = re.sub(r"\b(?:S|F|M|SRC)\s*\d+\b", "", text or "", flags=re.IGNORECASE)
-    return {
-        re.sub(r"[\s,]", "", value).lower()
-        for value in re.findall(
-            STRICT_NUMBER_PATTERN,
-            cleaned, flags=re.IGNORECASE,
-        )
-    }
-
-
-def strip_internal_source_markers(value: object) -> str:
-    return re.sub(
-        r"\s*[（(\[]\s*(?:S|SRC)\s*\d*(?:\s*[-,，]\s*(?:S|SRC)?\s*\d+)*\s*[）)\]]\s*",
-        " ",
-        str(value or ""),
-        flags=re.IGNORECASE,
-    ).strip()
-
-
-def clean_audience_bullet(value: object) -> str:
-    """Return a complete, audience-facing bullet or an empty string for model debris."""
-    text = re.sub(r"\s*\[\s*\d+(?:\s*[-,，]\s*\d+)*\s*\]\s*", "", str(value or ""))
-    text = strip_internal_source_markers(text)
-    text = re.sub(r"\s+", " ", text).strip(" ：:、，,；;。.")
-    if re.search(r"统一标题风格|避免标题过长|(?:保留|移[至入]|放).{0,16}(?:message|title|bullets)\b", text, re.I):
-        return ""
-    if re.match(r"^\d+(?:\.\d+){1,3}\s+", text):
-        return ""
-    text = re.sub(r"^[（(]\d+[）)]\s*", "", text)
-    if not text or re.fullmatch(r"[\d\W_]+", text):
-        return ""
-    if re.match(r"^(?:果的|的|与|及|和|或|以及|其中|所示|如表|如图)", text):
-        return ""
-    labeled_metric = bool(re.match(r"(?:[A-Za-z][\w@-]+|[\u4e00-\u9fff]{2,})\s*[:：]\s*\d", text))
-    if len(re.findall(r"[\u4e00-\u9fffA-Za-z]", text)) < 5 and not labeled_metric:
-        return ""
-    if re.search(r"如[表图]\s*\d+(?:[-－.]\d+)?\s*所示$", text):
-        return ""
-    # Conditions often follow a comma. Keep the claim intact; layout handles capacity.
-    return text
-
-
-def fit_audience_bullet(value: object, limit: int = 84) -> str:
-    """Keep slide copy readable while retaining the full source in speaker notes."""
-    text = clean_audience_bullet(value)
-    if len(text) <= limit:
-        return text
-    sentence = re.split(r"[。！？；;]", text, maxsplit=1)[0].strip()
-    if 18 <= len(sentence) <= limit:
-        return sentence
-    candidate = text[: limit + 1]
-    cut = max(candidate.rfind("，"), candidate.rfind(","), candidate.rfind("、"))
-    if cut >= 28:
-        return candidate[:cut].rstrip()
-    return text[: limit - 1].rstrip() + "…"
-
-
-def useful_evidence_claim(value: object) -> str:
-    raw = str(value or "").strip()
-    if re.search(r"[,，]\s*$", raw) or re.search(r"(?:对于|以及|并且|但是|其中)\s*$", raw):
-        return ""
-    text = clean_audience_bullet(value)
-    if (
-        not text
-        or len(re.findall(r"[\u4e00-\u9fff]", text)) < 4
-        or re.match(r"^[表图]\s*\d", text)
-        or (
-            len(re.findall(r"(?:MRR|Hit@\d+|nDCG@\d+|Accuracy|Precision|Recall|F1)", text, flags=re.IGNORECASE)) >= 3
-            and not re.search(r"(?:达到|提升|下降|表明|说明|高于|低于|为)", text)
-        )
-    ):
-        return ""
-    return text
-
-
-def ranked_evidence_claims(evidence: dict, refs: list[dict], query: str) -> list[str]:
-    keys = {(ref.get("document"), ref.get("section")) for ref in refs}
-    terms = set(re.findall(r"[A-Za-z][\w@-]{2,}|[\u4e00-\u9fff]{2,6}", query.lower()))
-    ranked: list[tuple[float, str, tuple[str | None, str | None]]] = []
-    seen: set[str] = set()
-    for fact in evidence.get("facts", []):
-        source_ref = fact.get("sourceRef", {})
-        if (source_ref.get("document"), source_ref.get("section")) not in keys:
-            continue
-        claim = useful_evidence_claim(fact.get("claim"))
-        if not claim or claim in seen:
-            continue
-        seen.add(claim)
-        lowered = claim.lower()
-        overlap = sum(1 for term in terms if term in lowered)
-        metric_bonus = 8 if strict_numbers(claim) else 0
-        sentence_bonus = 2 if re.search(r"[。！？；;]$", str(fact.get("claim", "")).strip()) else 0
-        source_key = (source_ref.get("document"), source_ref.get("section"))
-        ranked.append((metric_bonus + overlap * 1.5 + sentence_bonus + min(len(claim), 60) / 100, claim, source_key))
-    ranked.sort(key=lambda item: (-item[0], -len(item[1])))
-    diverse: list[str] = []
-    used_sources: set[tuple[str | None, str | None]] = set()
-    for _, claim, source_key in ranked:
-        if source_key not in used_sources:
-            diverse.append(claim)
-            used_sources.add(source_key)
-    diverse.extend(claim for _, claim, source_key in ranked if source_key in used_sources and claim not in diverse)
-    return diverse
-
-
-def _referenced_source_text(refs: list[dict], sources: list[dict]) -> str:
-    keys = {(ref.get("document"), ref.get("section")) for ref in refs}
-    return "\n".join(
-        str(section.get("text", ""))
-        for source in sources for section in source.get("sections", [])
-        if (source.get("name"), section.get("id")) in keys
-    )
-
-
-def academic_metric_story_bullets(
-    responsibility: str, refs: list[dict], sources: list[dict]
-) -> list[str]:
-    """Build complete academic metric bullets only from values captured in cited text."""
-    text = _referenced_source_text(refs, sources)
-    compact = re.sub(r"\s+", "", text)
-    topic = re.sub(r"\s+", "", responsibility)
-    bullets: list[str] = []
-
-    def values(pattern: str) -> tuple[str, ...] | None:
-        match = re.search(pattern, compact, flags=re.IGNORECASE)
-        return match.groups() if match else None
-
-    if "应用分类" in topic:
-        binary = values(
-            r"Accuracy(?:达到|为)?(\d+\.\d+).*?Precision(?:为)?(\d+\.\d+)"
-            r".*?Recall(?:为)?(\d+\.\d+).*?F1-score(?:为)?(\d+\.\d+)"
-        )
-        multiclass = values(
-            r"多分类任务中的Accuracy(?:为)?(\d+\.\d+).*?WeightedF1(?:达到|为)?(\d+\.\d+)"
-        )
-        macro = values(
-            r"MacroPrecision、MacroRecall和MacroF1分别为(\d+\.\d+)、(\d+\.\d+)和(\d+\.\d+)"
-        )
-        spread = values(
-            r"F1-score接近(\d+\.\d+).*?F1-score集中在(\d+\.\d+)至(\d+\.\d+)"
-            r".*?F1-score则下降至(\d+\.\d+)左右.*?甚至接近(\d+)"
-        )
-        if binary:
-            bullets.append(
-                f"二分类 Accuracy {binary[0]}、Precision {binary[1]}、Recall {binary[2]}、F1 {binary[3]}"
-            )
-        if multiclass:
-            bullets.append(
-                f"多分类 Accuracy {multiclass[0]}、Weighted F1 {multiclass[1]}，整体表现稳定"
-            )
-        if macro:
-            bullets.append(
-                f"Macro Precision / Recall / F1 为 {macro[0]} / {macro[1]} / {macro[2]}，长尾类别仍是短板"
-            )
-        if spread:
-            bullets.append(
-                f"类别 F1 从接近 {spread[0]} 到接近 {spread[4]}，语义重叠与样本不均衡是主要误差来源"
-            )
-
-    elif re.search(r"RAG.*检索", topic, flags=re.IGNORECASE):
-        mrr = values(r"MRR从(\d+\.\d+)提升至(\d+\.\d+)")
-        hit1 = values(r"Hit@1从(\d+\.\d+)提升至(\d+\.\d+)")
-        ndcg = values(r"nDCG@5从(\d+\.\d+)提升至(\d+\.\d+)")
-        recall = values(r"Hit@8与Recall@8达到(\d+\.\d+)")
-        gains = values(r"Hit@1提升约(\d+\.\d+)%.*?Hit@3提升约(\d+\.\d+)%")
-        difficult = values(r"Hit@1仅位于(\d+\.\d+)至(\d+\.\d+)区间")
-        if mrr and hit1:
-            bullets.append(
-                f"意图约束使 MRR {mrr[0]}→{mrr[1]}，Hit@1 {hit1[0]}→{hit1[1]}"
-            )
-        if ndcg and recall:
-            bullets.append(
-                f"nDCG@5 {ndcg[0]}→{ndcg[1]}，Hit@8 与 Recall@8 均达到 {recall[0]}"
-            )
-        if gains:
-            bullets.append(
-                f"Hit@1 提升约 {gains[0]}%，Hit@3 提升约 {gains[1]}%，收益集中在头部排序"
-            )
-        if difficult:
-            bullets.append(
-                f"敏感信息与低频权限查询的 Hit@1 仅 {difficult[0]}—{difficult[1]}，复杂语义仍是瓶颈"
-            )
-
-    elif re.search(r"多任务合规|合规分析结果", topic):
-        task_one = values(
-            r"权限-隐私政策一致性分析结果.*?Accuracy.*?为(\d+\.\d+)"
-            r".*?MacroF1.*?为(\d+\.\d+)"
-        )
-        task_two = values(
-            r"国标-权限合规性分析结果.*?Accuracy.*?达到(\d+\.\d+)"
-            r".*?MacroF1.*?为(\d+\.\d+)"
-        )
-        task_three = values(
-            r"国标-隐私政策合规性分析结果.*?Accuracy为(\d+\.\d+)"
-            r".*?WeightedF1为(\d+\.\d+)"
-        )
-        category_gap = values(
-            r"部分满足.*?召回率达到约(\d+\.\d+).*?满足.*?召回率较低（约(\d+\.\d+)）"
-        )
-        if task_one:
-            bullets.append(
-                f"权限—隐私政策一致性 Accuracy {task_one[0]}、Macro F1 {task_one[1]}"
-            )
-        if task_two:
-            bullets.append(
-                f"国标—权限合规性 Accuracy {task_two[0]}、Macro F1 {task_two[1]}"
-            )
-        if task_three:
-            bullets.append(
-                f"国标—隐私政策合规性 Accuracy {task_three[0]}、Weighted F1 {task_three[1]}"
-            )
-        if category_gap:
-            bullets.append(
-                f"“部分满足”召回率约 {category_gap[0]}，“满足”仅约 {category_gap[1]}，完全合规最难识别"
-            )
-
-    elif re.search(r"系统性能|生成质量|系统效率", topic):
-        structure = values(
-            r"结构完整率达到(\d+\.\d+).*?结构完整率为(\d+\.\d+)"
-            r".*?结构完整率达到(\d+\.\d+)"
-        )
-        evidence_rate = values(r"三类任务下的证据支撑率均达到(\d+\.\d+)")
-        elapsed = values(
-            r"平均耗时约(\d+\.\d+)秒.*?平均耗时约(\d+\.\d+)秒.*?平均耗时约(\d+\.\d+)秒"
-        )
-        cost = values(
-            r"平均成本约为(\d+\.\d+)元/应用.*?约为(\d+\.\d+)元/应用.*?约为(\d+\.\d+)元/应用"
-        )
-        if structure:
-            bullets.append(
-                f"三类任务结构完整率分别为 {structure[0]}、{structure[1]}、{structure[2]}"
-            )
-        if evidence_rate:
-            bullets.append(
-                f"三类报告证据支撑率均为 {evidence_rate[0]}，结论均能回溯规范依据"
-            )
-        if elapsed:
-            bullets.append(
-                f"三类任务平均耗时分别为 {elapsed[0]} 秒、{elapsed[1]} 秒、{elapsed[2]} 秒"
-            )
-        if cost:
-            bullets.append(
-                f"平均成本分别为 {cost[0]}、{cost[1]}、{cost[2]} 元/应用，模型推理占主要开销"
-            )
-
-    return [bullet for bullet in (clean_audience_bullet(value) for value in bullets) if bullet][:4]
-
-
-def sanitize_numeric_claims(slide: dict, evidence: dict, sources: list[dict]) -> None:
-    refs = slide.get("sourceRefs", [])
-    keys = {(ref.get("document"), ref.get("section")) for ref in refs}
-    referenced_text = " ".join(
-        section.get("text", "")
-        for source in sources for section in source.get("sections", [])
-        if (source["name"], section["id"]) in keys
-    )
-    allowed = strict_numbers(referenced_text)
-    facts = [
-        cleaned for fact in evidence.get("facts", [])
-        if (fact["sourceRef"].get("document"), fact["sourceRef"].get("section")) in keys
-        if (cleaned := useful_evidence_claim(fact.get("claim")))
-    ]
-    clean = []
-    for bullet in slide.get("content", {}).get("bullets", []):
-        bullet_text = clean_audience_bullet(bullet)
-        if not bullet_text:
-            continue
-        unsupported = strict_numbers(bullet_text) - allowed
-        relation_mismatch = "下降" in bullet_text and "下降到" not in bullet_text and any("下降到" in fact for fact in facts)
-        if unsupported or relation_mismatch:
-            if facts:
-                matching = max(facts, key=lambda fact: len(query_terms(fact) & query_terms(bullet_text)))
-                clean.append(matching)
-            else:
-                # Deleting only a number can turn a fabricated measurement into a false claim.
-                continue
-        else:
-            clean.append(bullet_text)
-    slide["content"]["bullets"] = list(dict.fromkeys(clean))
-    if strict_numbers(str(slide.get("message", ""))) - allowed:
-        slide["message"] = facts[0] if facts else slide["content"].get("title", "")
 
 
 def parse_model_json(content: str) -> dict:
@@ -1024,12 +747,12 @@ async def enhance_plan_with_routed_model(
             [page_title, message, slide["purpose"], *clean_bullets]
         )
         # Copy is written from fixed references in the batch. Keep those references stable.
-        metric_story = academic_metric_story_bullets(
+        metric_story = referenced_metric_claims(
             f"{responsibility} {page_title}", slide.get("sourceRefs", []), sources
         )
         if metric_story:
             slide["content"]["bullets"] = metric_story
-        elif "实验结果" in responsibility or "多任务合规分析结果" in responsibility:
+        elif proposed_role in {"data", "comparison"}:
             evidence_claims = [
                 claim for claim in ranked_evidence_claims(
                     plan["evidence"], slide.get("sourceRefs", []), ref_query
@@ -1153,10 +876,15 @@ async def enhance_plan_with_routed_model(
 async def _plan_project_core(project_id: str, body: PlanRequest, db: Session):
     project = project_or_404(project_id, db)
     stored_sources = load_sources(project_id, db)
+    def usable_source_text(section: dict) -> bool:
+        text = re.sub(r"\s+", " ", str(section.get("text", ""))).strip()
+        if not text or re.fullmatch(r"图片尺寸\s*\d+\s*[×x]\s*\d+", text, flags=re.IGNORECASE):
+            return False
+        return bool(re.search(r"[\u3400-\u9fffA-Za-z]{2,}", text))
+
     if stored_sources and not any(
-        section.get("text", "").strip()
+        usable_source_text(section)
         for source in stored_sources
-        if Path(source.get("name", "")).suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}
         for section in source.get("sections", [])
     ):
         raise HTTPException(422, "上传材料中没有可读取的正文。请补充可读取的文档或文字识别结果，再生成基于材料的演示。")
@@ -1248,6 +976,14 @@ async def _plan_project_core(project_id: str, body: PlanRequest, db: Session):
             personal_slide["designSystem"] = copy.deepcopy(design_system)
             personal_slide["personalizationBaseline"] = copy.deepcopy(base_design_system)
         record_comparison(db, project_id, snapshot, baseline_plan, personal_plan, baseline_model, model_run, regression_reasons)
+    old_slide_ids = list(db.scalars(
+        select(SlideSpecRecord.id).where(SlideSpecRecord.project_id == project_id)
+    ))
+    if old_slide_ids:
+        db.execute(update(LicensedAsset).where(LicensedAsset.slide_id.in_(old_slide_ids)).values(slide_id=None))
+        db.execute(delete(SlideCandidate).where(SlideCandidate.slide_id.in_(old_slide_ids)))
+        db.execute(delete(SlideVersion).where(SlideVersion.slide_id.in_(old_slide_ids)))
+        db.execute(delete(SlideEditMessage).where(SlideEditMessage.slide_id.in_(old_slide_ids)))
     db.execute(delete(SlideSpecRecord).where(SlideSpecRecord.project_id == project_id))
     db.execute(delete(DeckSpecRecord).where(DeckSpecRecord.project_id == project_id))
     hashes = [source["sha256"] for source in sources]
@@ -1779,6 +1515,18 @@ def _start_project_job(
     db: Session,
     payload: dict | None = None,
 ) -> dict:
+    from app.api.project_lifecycle import project_lifecycle_lock
+
+    with project_lifecycle_lock(project_id):
+        return _start_project_job_locked(project_id, kind, db, payload)
+
+
+def _start_project_job_locked(
+    project_id: str,
+    kind: str,
+    db: Session,
+    payload: dict | None = None,
+) -> dict:
     project = project_or_404(project_id, db)
     active = db.scalar(
         select(Job)
@@ -1787,6 +1535,8 @@ def _start_project_job(
     )
     if active:
         return _job_view(active)
+    if not job_manager.has_capacity():
+        raise HTTPException(503, "生成队列已满，请稍后再提交任务")
     from app.db.models import PersonalBinding
     if kind in {"outline", "full"} and (payload or {}).get("personalization_mode") == "profile":
         personal.bind(db, project_id, payload.get("profile_id"), payload.get("preset", "academic"), payload.get("profile_revision"))

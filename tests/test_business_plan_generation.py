@@ -1,4 +1,5 @@
 import copy
+from collections import Counter
 
 from app.api.workflow_routes import repair_outline_from_builtin
 from app.documents import parse_source
@@ -6,8 +7,6 @@ from app.documents.parser import _is_contents_page, _is_page_marker
 from app.documents.structure import table_record
 from app.presentation_intelligence.planner import _record_score, _section_records, plan_deck
 from app.validation.quality import validate_deck
-from collections import Counter
-
 
 BUSINESS_PLAN = """
 # 第一章 项目介绍

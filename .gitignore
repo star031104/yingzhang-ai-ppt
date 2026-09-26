@@ -26,12 +26,9 @@ __pycache__/
 *.doc
 *.docx
 .slideforge/
-runtime/
+/runtime/
 test-results/
 skills/installed/
 skills/generated/
 .runtime-*.log
 output/
-
-# Internal iteration notes are kept locally. Public architecture records live in docs/adr/.
-docs/*.md

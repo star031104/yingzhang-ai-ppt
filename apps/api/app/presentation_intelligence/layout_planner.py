@@ -120,7 +120,7 @@ def _variant_score(
     if relation == "explanation" and family in {"flow", "timeline", "stages", "layers", "map"} and role not in {"cover", "agenda", "section", "questions"}:
         score -= 60
     if variant == "evidence-brief":
-        score += 30 if relation == "explanation" else 0
+        score += (18 if role in {"content", "insight"} else 30) if relation == "explanation" else 0
     if family in preferred:
         score += 24 - preferred.index(family) * 5
     if payload["hasImage"]:
@@ -149,6 +149,8 @@ def _variant_score(
     if previous_silhouette == silhouette:
         score -= 28
     score -= used[silhouette] * 5
+    if role in {"content", "insight"}:
+        score -= used[family] * 8
     return score
 
 
@@ -209,6 +211,8 @@ def plan_deck_layouts(
             *[str(item) for item in learned.get(str(slide.get("role")), [])],
             *[str(item) for item in visual.get("archetypeCandidates", [])],
         ]
+        if payload["metricCount"] and slide.get("role") in {"content", "insight"}:
+            candidates.insert(0, "metric-wall")
         if visual.get("contentRelation") == "explanation" and slide.get("role") not in {"cover", "agenda", "section", "questions", "data", "comparison"} and not payload["hasImage"]:
             candidates.insert(0, "evidence-brief")
         if payload["itemCount"] <= 1:

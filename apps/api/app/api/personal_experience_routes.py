@@ -3,19 +3,24 @@ import json
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
-from sqlalchemy import select
-
 from app.api.dependencies import project_or_404
 from app.db.models import PersonalCase, PersonalReference
 from app.db.session import get_db
 from app.personalization import cases, service
-from app.personalization.private_files import reference_root, reference_view, save_reference, validate_pptx
+from app.personalization.private_files import (
+    reference_root,
+    reference_view,
+    save_reference,
+    validate_pptx,
+)
 from app.personalization.runtime import lock
 from app.personalization.schemas import RevisionRequest
+from app.security.uploads import read_upload_limited
 from app.slides import load_slides
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(service.require_local)])
 
@@ -95,7 +100,7 @@ async def retain_template(profile_id: str, file: UploadFile = File(...), revisio
                           retain_original: bool = Form(False), db=Depends(get_db)):
     if not retain_original:
         raise HTTPException(422, "保存原生模板需要明确选择保留原文件")
-    data = await file.read(20 * 1024 * 1024 + 1)
+    data = await read_upload_limited(file, 20 * 1024 * 1024, "参考模板")
     validate_pptx(data)
     from app.personalization.reference import extract_reference
     value, metadata = extract_reference(data)
@@ -125,8 +130,8 @@ def activate_reference(profile_id: str, reference_id: str, body: RevisionRequest
 
 @router.delete("/me/profiles/{profile_id}/references/{reference_id}")
 def forget_reference(profile_id: str, reference_id: str, db=Depends(get_db)):
+    from app.personalization.lifecycle import delete_derived_rules, invalidate_profile
     from app.personalization.private_files import erase_private_reference
-    from app.personalization.lifecycle import invalidate_profile, delete_derived_rules
     with lock:
         profile = service.profile(db, profile_id)
         row = db.get(PersonalReference, reference_id)
@@ -148,8 +153,9 @@ class ReferencePreview(BaseModel):
 @router.post("/me/profiles/{profile_id}/references/{reference_id}/preview")
 async def preview_reference(profile_id: str, reference_id: str, body: ReferencePreview = ReferencePreview(), db=Depends(get_db)):
     import asyncio
+
     from app.personalization.office import render_office
-    from app.personalization.runtime import generation_snapshot, assert_current
+    from app.personalization.runtime import assert_current, generation_snapshot
     profile = service.profile(db, profile_id)
     row = db.get(PersonalReference, reference_id)
     if not row or row.profile_id != profile.id or row.owner_id != profile.owner_id:
@@ -159,8 +165,8 @@ async def preview_reference(profile_id: str, reference_id: str, body: ReferenceP
     try:
         root = reference_root(row)
         # Render in a temporary sibling directory, promote only under current epoch.
-        import tempfile
         import shutil
+        import tempfile
         with tempfile.TemporaryDirectory(prefix=".reference-preview-", dir=root.parent) as folder:
             staged = Path(folder)
             shutil.copy2(root / "reference.pptx", staged / "reference.pptx")
@@ -212,13 +218,12 @@ def export_experience_pack(profile_id: str, body: PackExport, db=Depends(get_db)
 @router.post("/me/experience-pack-import", status_code=201)
 async def import_experience_pack(file: UploadFile = File(...), retain_originals: bool = Form(False), db=Depends(get_db)):
     import base64
+
     from app.db.models import PersonalProfile
     from app.personalization.experience_pack import validate_pack
-    from app.personalization.schemas import ProfileCreate
     from app.personalization.reference import extract_reference
-    data = await file.read(30 * 1024 * 1024 + 1)
-    if len(data) > 30 * 1024 * 1024:
-        raise HTTPException(413, "经验包不能超过 30 MB")
+    from app.personalization.schemas import ProfileCreate
+    data = await read_upload_limited(file, 30 * 1024 * 1024, "经验包")
     try:
         payload = validate_pack(json.loads(data))
         config = ProfileCreate(name=payload["name"], scenario=payload["scenario"], use_memory=False)

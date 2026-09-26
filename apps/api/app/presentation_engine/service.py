@@ -22,7 +22,7 @@ class PresentationEngine:
             output.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.TemporaryDirectory(prefix=".personal-render-", dir=output.parent) as folder:
                 staged = Path(folder) / output.name
-                if command == "assemble" and output.is_dir():
+                if command.startswith("assemble") and output.is_dir():
                     shutil.copytree(output, staged)
                 self._run(command, slides, staged)
                 with lock:

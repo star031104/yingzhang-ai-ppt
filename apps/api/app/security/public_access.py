@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import re
 import threading
@@ -9,10 +10,9 @@ from collections import defaultdict, deque
 from urllib.parse import urlsplit
 
 from app.config import settings
-from fastapi import HTTPException, APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-
 
 COOKIE_NAME = "yingzhang_session"
 router = APIRouter(prefix="/api/v1/auth", tags=["共享测试访问"])
@@ -20,6 +20,7 @@ _requests: dict[str, deque[float]] = defaultdict(deque)
 _generations: dict[str, deque[float]] = defaultdict(deque)
 _logins: dict[str, deque[float]] = defaultdict(deque)
 _rate_lock = threading.Lock()
+_rate_checks = 0
 
 
 class LoginRequest(BaseModel):
@@ -34,6 +35,8 @@ def validate_public_config() -> None:
         raise RuntimeError("共享测试模式需要至少 10 位测试密码")
     if not settings.public_admin_password or len(settings.public_admin_password) < 12:
         raise RuntimeError("共享测试模式需要至少 12 位管理员密码")
+    if hmac.compare_digest(settings.public_admin_password, settings.public_test_password):
+        raise RuntimeError("测试者密码和管理员密码必须不同，否则测试者会获得管理员权限")
     if not settings.public_session_secret or len(settings.public_session_secret) < 32:
         raise RuntimeError("共享测试模式需要至少 32 位会话密钥")
 
@@ -78,16 +81,21 @@ def current_user(request: Request) -> dict | None:
 
 
 def _client_key(request: Request, user: dict) -> str:
-    ip = request.headers.get("cf-connecting-ip")
-    if not ip:
-        forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-        ip = forwarded or (request.client.host if request.client else "unknown")
-    return f"{ip}:{user.get('name', 'tester')}"
+    return _client_ip(request)
 
 
 def _within_limit(bucket: dict[str, deque[float]], key: str, window: int, limit: int) -> bool:
+    global _rate_checks
     now = time.monotonic()
     with _rate_lock:
+        _rate_checks += 1
+        if _rate_checks % 256 == 0:
+            for tracked_bucket in (_requests, _generations, _logins):
+                for tracked_key, tracked_entries in tuple(tracked_bucket.items()):
+                    while tracked_entries and tracked_entries[0] <= now - 600:
+                        tracked_entries.popleft()
+                    if not tracked_entries:
+                        tracked_bucket.pop(tracked_key, None)
         entries = bucket[key]
         while entries and entries[0] <= now - window:
             entries.popleft()
@@ -101,16 +109,44 @@ def _same_origin(request: Request) -> bool:
     origin = request.headers.get("origin")
     if not origin:
         return True
-    expected = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
-    return urlsplit(origin).netloc.lower() == expected.lower()
+    return urlsplit(origin).netloc.lower() == request.headers.get("host", "").lower() or origin.rstrip("/").lower() in {
+        item.rstrip("/").lower() for item in settings.cors_origin_list
+    }
+
+
+def _trusted_proxy(request: Request) -> bool:
+    peer = request.client.host if request.client else ""
+    try:
+        address = ipaddress.ip_address(peer)
+        return any(address in ipaddress.ip_network(value, strict=False) for value in settings.trusted_proxy_ip_list)
+    except ValueError:
+        return False
 
 
 def _client_ip(request: Request) -> str:
-    ip = request.headers.get("cf-connecting-ip")
-    if not ip:
-        forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-        ip = forwarded or (request.client.host if request.client else "unknown")
-    return ip
+    peer = request.client.host if request.client else "unknown"
+    if not _trusted_proxy(request):
+        return peer
+    forwarded = [item.strip() for item in request.headers.get("x-forwarded-for", "").split(",") if item.strip()]
+    if forwarded:
+        # Walk from the socket peer toward the client, discarding only trusted
+        # proxy hops. Leftmost XFF values may have been supplied by the client.
+        chain = [*forwarded, peer]
+        while chain:
+            candidate = chain.pop()
+            try:
+                address = ipaddress.ip_address(candidate)
+            except ValueError:
+                return peer
+            if any(address in ipaddress.ip_network(value, strict=False) for value in settings.trusted_proxy_ip_list):
+                continue
+            return str(address)
+        return peer
+    candidate = request.headers.get("cf-connecting-ip", "").strip()
+    try:
+        return str(ipaddress.ip_address(candidate))
+    except ValueError:
+        return peer
 
 
 def _admin_only(request: Request) -> bool:
@@ -125,18 +161,38 @@ def _admin_only(request: Request) -> bool:
         return True
     if method == "DELETE" and path.startswith("/api/v1/skills/"):
         return True
-    if method == "DELETE" and re.fullmatch(r"/api/v1/projects/[^/]+", path):
-        return True
-    return False
+    return method == "DELETE" and bool(re.fullmatch(r"/api/v1/projects/[^/]+", path))
+
+
+def _shared_governance_admin_only(request: Request) -> bool:
+    path = request.url.path
+    return bool(
+        re.fullmatch(r"/api/v1/projects/[^/]+/(?:approvals|publish|members)", path)
+        or request.method.upper() == "DELETE"
+        and re.fullmatch(r"/api/v1/projects/[^/]+/publications/[^/]+", path)
+    )
 
 
 def _is_generation(request: Request) -> bool:
-    if request.method.upper() != "POST":
+    method = request.method.upper()
+    path = request.url.path
+    if method == "GET" and path.endswith("/export/html") and request.query_params.get("preview") is not None:
         return False
+    if method == "GET" and re.fullmatch(
+        r"/api/v1/projects/[^/]+/(?:export/(?:html|pptx|pdf)|slides/[^/]+/export/pptx|powerpoint/export)",
+        path,
+    ):
+        return True
+    if method != "POST":
+        return False
+    if "/export/" in path or path.endswith("/powerpoint/export"):
+        return True
     return bool(
         re.search(
-            r"/(?:outline|sample|generate|calibrate|test-image)$|/jobs/(?:outline|sample|generate)$",
-            request.url.path,
+            r"/(?:outline|sample|generate|calibrate|test-image)$"
+            r"|/jobs/(?:outline|sample|generate|full|regenerate)$"
+            r"|/slides/[^/]+/(?:candidates|regenerate|repair|chat)$",
+            path,
         )
     )
 
@@ -176,7 +232,9 @@ async def public_access_middleware(request: Request, call_next):
             )
     if request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"} and not _same_origin(request):
         return JSONResponse({"detail": "请求来源校验失败"}, status_code=403)
-    if user["role"] != "admin" and _admin_only(request):
+    if user["role"] != "admin" and (
+        _admin_only(request) or _shared_governance_admin_only(request)
+    ):
         return JSONResponse({"detail": "该操作仅管理员可用"}, status_code=403)
     key = _client_key(request, user)
     if not _within_limit(
@@ -185,7 +243,7 @@ async def public_access_middleware(request: Request, call_next):
         return JSONResponse({"detail": "操作过于频繁，请稍后再试"}, status_code=429)
     if _is_generation(request) and not _within_limit(
         _generations,
-        key,
+        _client_ip(request),
         600,
         max(2, settings.public_generation_limit_per_10_minutes),
     ):
@@ -249,8 +307,8 @@ def logout(request: Request):
     from app.security.accounts import COOKIE
     token = request.cookies.get(COOKIE)
     if token:
-        from app.db.session import SessionLocal
         from app.db.models import PersonalSession
+        from app.db.session import SessionLocal
         with SessionLocal() as db:
             row = db.get(PersonalSession, hashlib.sha256(token.encode()).hexdigest())
             if row:
@@ -263,17 +321,17 @@ def logout(request: Request):
 def private_setup_required():
     if not settings.private_accounts_mode:
         return False
-    from app.db.session import SessionLocal
     from app.db.models import PersonalAccount
+    from app.db.session import SessionLocal
     from sqlalchemy import select
     with SessionLocal() as db:
         return db.scalar(select(PersonalAccount.id)) is None
 
 
 async def private_access(request, call_next):
-    from app.security.accounts import owner_context, authorize_project
+    from app.db.models import EvaluationRun, Job
     from app.db.session import SessionLocal
-    from app.db.models import Job, EvaluationRun
+    from app.security.accounts import authorize_project, owner_context
     from sqlalchemy import select
     path = request.url.path
     # Do not trust forwarded host headers for private session CSRF checks.
@@ -281,7 +339,7 @@ async def private_access(request, call_next):
     if request.method in {"POST", "PUT", "PATCH", "DELETE"} and origin and urlsplit(origin).netloc.lower() != request.headers.get("host", "").lower() and origin not in settings.cors_origin_list:
         return JSONResponse({"detail": "请求来源校验失败"}, status_code=403)
     if path in {"/api/v1/auth/login", "/api/v1/auth/accounts"}:
-        if not _within_limit(_logins, request.client.host if request.client else "unknown", 300, 12):
+        if not _within_limit(_logins, _client_ip(request), 300, 12):
             return JSONResponse({"detail": "尝试过多，请稍后重试"}, status_code=429)
         return await call_next(request)
     if path in {"/api/v1/health", "/api/v1/auth/session"} or (request.method == "GET" and path.startswith("/api/v1/public/decks/")):
@@ -297,11 +355,43 @@ async def private_access(request, call_next):
         with SessionLocal() as db:
             match = re.match(r"/api/v1/projects/([^/]+)", path)
             if match:
-                authorize_project(db, match[1], user["id"])
+                project_role = authorize_project(db, match[1], user["id"])
+                request.state.project_role = project_role
+                method = request.method.upper()
+                action = "view" if method in {"GET", "HEAD", "OPTIONS"} else "edit"
+                if path.endswith("/approvals"):
+                    action = "approve"
+                elif path.endswith("/publish"):
+                    action = "publish"
+                elif path.endswith("/members") or method == "DELETE" and re.fullmatch(r"/api/v1/projects/[^/]+", path):
+                    action = "manage-members"
+                elif method == "DELETE" and "/publications/" in path:
+                    action = "revoke"
+                elif "/powerpoint/export" in path:
+                    action = "edit"
+                elif method not in {"GET", "HEAD", "OPTIONS"} and (
+                    "/sources" in path or "/assets" in path or "/brand-assets" in path
+                ):
+                    action = "upload"
+                elif "/export/" in path:
+                    action = (
+                        "view"
+                        if request.method.upper() == "GET"
+                        and path.endswith("/export/html")
+                        and request.query_params.get("preview") is not None
+                        else "edit"
+                    )
+                from app.professional.governance import can
+                if not can(project_role, action):
+                    return JSONResponse({"detail": "当前项目角色无权执行此操作"}, status_code=403)
             match = re.match(r"/api/v1/jobs/([^/]+)", path)
             if match:
                 job = db.get(Job, match[1])
-                authorize_project(db, job.project_id if job else None, user["id"])
+                project_role = authorize_project(db, job.project_id if job else None, user["id"])
+                action = "view" if request.method.upper() in {"GET", "HEAD", "OPTIONS"} else "edit"
+                from app.professional.governance import can
+                if not can(project_role, action):
+                    return JSONResponse({"detail": "当前项目角色无权执行此操作"}, status_code=403)
             match = re.match(r"/api/v1/evaluations/blind/([^/]+)", path)
             if match:
                 evaluation = db.scalar(select(EvaluationRun).where(EvaluationRun.blind_token == match[1]))

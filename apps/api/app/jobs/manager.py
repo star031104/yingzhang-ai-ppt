@@ -34,6 +34,8 @@ class JobManager:
         self.executor = executor or AsyncioJobExecutor()
         self.event_bus = event_bus or InMemoryEventBus()
         self.runners: list[tuple[Callable[[str], bool], RunnerFactory]] = []
+        self._scheduled_jobs: dict[str, asyncio.Task[Any]] = {}
+        self._draining = False
 
     def register_runner(
         self,
@@ -85,11 +87,61 @@ class JobManager:
                 resumable.append((persisted, runner))
 
         for snapshot, runner in resumable:
+            if not self.has_capacity():
+                break
             self.spawn(runner(snapshot), job_id=snapshot["id"])
         return len(resumable)
 
     def spawn(self, coroutine: Awaitable[Any], job_id: str | None = None):
-        return self.executor.submit(coroutine, job_id)
+        if job_id and job_id in self._scheduled_jobs:
+            close = getattr(coroutine, "close", None)
+            if close:
+                close()
+            return self._scheduled_jobs[job_id]
+        task = self.executor.submit(coroutine, job_id)
+        if job_id:
+            self._scheduled_jobs[job_id] = task
+            task.add_done_callback(lambda completed, key=job_id: self._job_finished(key, completed))
+        return task
+
+    def _job_finished(self, job_id: str, task: asyncio.Task[Any]) -> None:
+        if self._scheduled_jobs.get(job_id) is task:
+            self._scheduled_jobs.pop(job_id, None)
+        if not any(
+            snapshot["status"] == "queued" and snapshot["id"] != job_id
+            for snapshot in self.store.list_active()
+        ):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if not loop.is_closed():
+            drain = self._drain_queued()
+            try:
+                loop.create_task(drain)
+            except RuntimeError:
+                drain.close()
+
+    async def _drain_queued(self) -> None:
+        if self._draining:
+            return
+        self._draining = True
+        try:
+            for snapshot in self.store.list_active():
+                if not self.has_capacity():
+                    break
+                if snapshot["status"] != "queued" or snapshot["id"] in self._scheduled_jobs:
+                    continue
+                runner = self._runner_for(snapshot["kind"])
+                if runner:
+                    self.spawn(runner(snapshot), job_id=snapshot["id"])
+        finally:
+            self._draining = False
+
+    def has_capacity(self) -> bool:
+        capacity_check = getattr(self.executor, "has_capacity", None)
+        return capacity_check() if capacity_check else True
 
     async def connect(self, job_id, ws):
         await self.event_bus.connect(job_id, ws)
@@ -138,11 +190,16 @@ class JobManager:
                 "cancelRequestedAt": datetime.now(UTC).isoformat(),
             }
         )
+        if snapshot["status"] == "queued":
+            snapshot["status"] = "cancelled"
+            checkpoint["stage"] = "cancelled"
+            checkpoint["label"] = "排队任务已取消"
         snapshot["checkpoint"] = checkpoint
         snapshot = self.store.save(snapshot)
         if not snapshot:
             return None
-        await self.publish(job_id, {**snapshot, "type": "cancel_requested"})
+        event_type = "cancelled" if snapshot["status"] == "cancelled" else "cancel_requested"
+        await self.publish(job_id, {**snapshot, "type": event_type})
         return snapshot
 
     async def run_demo(self, job_id):
@@ -151,6 +208,19 @@ class JobManager:
             status = "completed" if progress == 1 else "running"
             snapshot = self.store.get(job_id)
             if not snapshot:
+                return
+            if snapshot["status"] in TERMINAL_JOB_STATUSES:
+                return
+            if snapshot["checkpoint"].get("cancelRequested"):
+                snapshot["status"] = "cancelled"
+                snapshot["error"] = None
+                snapshot["checkpoint"] = {
+                    **snapshot["checkpoint"],
+                    "stage": "cancelled",
+                    "label": "任务已取消",
+                }
+                self.store.save(snapshot)
+                await self.publish(job_id, {**snapshot, "type": "cancelled"})
                 return
             snapshot["status"] = status
             snapshot["progress"] = progress

@@ -1,18 +1,18 @@
-import base64
 import asyncio
+import base64
 import hashlib
-import json
-from pathlib import Path
 import ipaddress
+import json
 import socket
 import time
-from urllib.parse import urlparse, quote
+from pathlib import Path
+from urllib.parse import quote, urlparse
 
 import httpx
 from app.config import settings
 from app.personalization.runtime import assert_current
-from app.security.network_policy import ensure_network_allowed
 from app.providers.image_models import image_candidates, image_model_problem
+from app.security.network_policy import ensure_network_allowed
 
 
 class ProviderError(RuntimeError):
@@ -203,17 +203,47 @@ class OpenAICompatibleClient:
             payload["response_format"] = {"type": "json_schema", "json_schema": {"name": "result", "strict": True, "schema": json_schema}}
         if thinking_budget is not None:
             payload["thinking_budget"] = thinking_budget
+        input_tokens = output_tokens = None
+        request_count = 0
+        usage_request_count = 0
+
+        async def record_usage():
+            if request_count == 0:
+                return
+            from app.providers.usage import record_model_usage, usage_project_id
+
+            await asyncio.to_thread(
+                record_model_usage,
+                usage_project_id.get(),
+                model,
+                input_tokens,
+                output_tokens,
+                request_count,
+                usage_request_count,
+            )
         try:
             assert_current()
             ensure_network_allowed(self.chat_url)
             async with httpx.AsyncClient(trust_env=not settings.local_only_mode, timeout=max(self.timeout, 240.0)) as client:
                 content = None
                 for attempt in range(2):
+                    request_count += 1
                     response = await client.post(self.chat_url, headers=self.headers, json=payload)
                     response.raise_for_status()
                     data = response.json()
                     if not isinstance(data, dict):
                         raise ProviderError("模型服务返回了无效响应")
+                    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+                    prompt_count = usage.get("prompt_tokens", usage.get("input_tokens"))
+                    completion_count = usage.get("completion_tokens", usage.get("output_tokens"))
+                    response_measured = False
+                    if isinstance(prompt_count, int) and not isinstance(prompt_count, bool) and prompt_count >= 0:
+                        input_tokens = (input_tokens or 0) + prompt_count
+                        response_measured = True
+                    if isinstance(completion_count, int) and not isinstance(completion_count, bool) and completion_count >= 0:
+                        output_tokens = (output_tokens or 0) + completion_count
+                        response_measured = True
+                    usage_request_count += response_measured
                     if data.get("error") or data.get("errors"):
                         raise ProviderError(self._safe_error(data))
                     choices = data.get("choices")
@@ -235,10 +265,13 @@ class OpenAICompatibleClient:
                             payload["thinking"] = {"type": "disabled"}
             if not isinstance(content, str) or not content.strip():
                 raise ProviderError("模型返回了空内容")
+            await record_usage()
             return content.strip()
         except ProviderError:
+            await record_usage()
             raise
         except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
+            await record_usage()
             detail = str(exc).strip() or type(exc).__name__
             raise ProviderError(detail) from exc
 

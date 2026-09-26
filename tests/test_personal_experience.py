@@ -6,17 +6,22 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
-from fastapi.testclient import TestClient
-from pptx import Presentation
-
 from app.config import settings
-from app.db.models import PersonalBinding, PersonalCase, PersonalComparison, PersonalReference, Project
+from app.db.models import (
+    PersonalBinding,
+    PersonalCase,
+    PersonalComparison,
+    PersonalReference,
+    Project,
+)
 from app.db.session import SessionLocal
 from app.main import app
 from app.personalization.private_files import validate_pptx
 from app.personalization.roundtrip_learning import annotate_export, compare_external
-from test_personalization import make_profile, teach, plan, reset
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+from pptx import Presentation
+from test_personalization import make_profile, plan, reset, teach
 
 
 def pptx_bytes():
@@ -141,17 +146,19 @@ def test_reference_rejects_unsafe_or_broken_archives(part, data):
 
 
 def test_private_accounts_isolate_projects_memories_and_revoke_sessions(client, monkeypatch):
+    from contextlib import nullcontext
+
     from app.security.public_access import _logins
     _logins.clear()
     monkeypatch.setattr(settings, 'private_accounts_mode', True)
-    with TestClient(app, base_url='http://localhost', client=('127.0.0.1', 50000)) as admin:
+    with nullcontext(TestClient(app, base_url='http://localhost', client=('127.0.0.1', 50000))) as admin:
         assert admin.post('/api/v1/auth/accounts', json={'name': 'admin', 'password': 'example-pass-123'}).status_code == 201
         assert admin.post('/api/v1/auth/login', json={'name': 'admin', 'password': 'example-pass-123'}).status_code == 200
         own = admin.post('/api/v1/projects', json={'name': 'Admin secret'}).json()
         profile = make_profile(admin)
         created = admin.post('/api/v1/auth/accounts', json={'name': 'member', 'password': 'member-pass-123'})
         assert created.status_code == 201, created.text
-        with TestClient(app, base_url='http://localhost', client=('127.0.0.1', 50001)) as member:
+        with nullcontext(TestClient(app, base_url='http://localhost', client=('127.0.0.1', 50001))) as member:
             assert member.post('/api/v1/auth/login', json={'name': 'member', 'password': 'member-pass-123'}).status_code == 200
             assert member.get('/api/v1/projects').json() == []
             assert member.get(f"/api/v1/projects/{own['id']}").status_code == 404
@@ -163,9 +170,9 @@ def test_private_accounts_isolate_projects_memories_and_revoke_sessions(client, 
 
 
 def test_desktop_acceptance_is_bound_to_file_bytes(client, tmp_path, monkeypatch):
-    from app.personalization import office
     from app.db.models import DeliveryVerification
-    profile = make_profile(client); project, result = plan(client, profile)
+    from app.personalization import office
+    profile = make_profile(client); project, _result = plan(client, profile)
     with SessionLocal() as db:
         target = Path(db.get(Project, project['id']).artifact_path) / 'exports' / 'presentation.pptx'
     target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(pptx_bytes())
@@ -186,9 +193,7 @@ def test_workspace_lock_reentrant_and_released_after_exception(tmp_path, monkeyp
     from app.personalization.process_lock import WorkspaceLock
     monkeypatch.setattr(settings, 'artifact_root', tmp_path)
     lock = WorkspaceLock()
-    with pytest.raises(RuntimeError):
-        with lock:
-            with lock: raise RuntimeError('interrupted')
+    with pytest.raises(RuntimeError), lock, lock: raise RuntimeError('interrupted')
     with lock: pass
 
 def test_native_export_requires_actual_acceptance_and_preserves_all_bullets(client, monkeypatch):
@@ -259,11 +264,11 @@ def test_manual_pdf_acceptance_checks_page_content_and_hash(client):
 def test_additive_migrations_preserve_existing_projects(tmp_path):
     from alembic import command
     from alembic.config import Config
-    from sqlalchemy import create_engine, text, inspect
+    from sqlalchemy import create_engine, inspect, text
     config = Config()
     config.set_main_option('script_location', str(Path('apps/api/alembic').resolve()))
     url = 'sqlite:///' + (tmp_path/'migration.db').as_posix()
-    config.set_main_option('sqlalchemy.url', url)
+    config.attributes['database_url'] = url
     command.upgrade(config, '0001')
     engine = create_engine(url)
     with engine.begin() as connection:
@@ -272,7 +277,8 @@ def test_additive_migrations_preserve_existing_projects(tmp_path):
     assert 'personal_cases' in inspect(engine).get_table_names()
     with engine.connect() as connection: assert connection.execute(text("SELECT name FROM projects WHERE id='preserved'")).scalar() == 'Existing'
     command.downgrade(config, '0001')
-    assert 'personal_cases' not in inspect(engine).get_table_names()
+    # Rollbacks retain personal data; older code can ignore the additive table.
+    assert 'personal_cases' in inspect(engine).get_table_names()
     with engine.connect() as connection: assert connection.execute(text("SELECT name FROM projects WHERE id='preserved'")).scalar() == 'Existing'
     engine.dispose()
 
