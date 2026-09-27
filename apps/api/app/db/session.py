@@ -10,7 +10,8 @@ if settings.database_url.startswith("sqlite:///") and ":memory:" not in settings
     )
 engine = create_engine(
     settings.database_url,
-    connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},
+    connect_args={"check_same_thread": False, "timeout": 30}
+    if settings.database_url.startswith("sqlite") else {},
 )
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
@@ -19,6 +20,10 @@ if settings.database_url.startswith("sqlite"):
     @event.listens_for(engine, "connect")
     def enable_secure_delete(connection, _record):
         # Ordinary memory rows must not remain in SQLite free pages after DELETE.
+        connection.execute("PRAGMA busy_timeout=30000")
+        if ":memory:" not in settings.database_url:
+            # Readers and brief progress writes can proceed during generation.
+            connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("PRAGMA secure_delete=ON")
         connection.execute("PRAGMA foreign_keys=ON")
 

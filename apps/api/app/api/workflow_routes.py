@@ -909,6 +909,9 @@ async def _plan_project_core(project_id: str, body: PlanRequest, db: Session):
         generation_snapshot.set(None)
     sources = stored_sources or [build_brief_source(body.title, instructions)]
     selected_skills = set_project_skills(project_id, body.skill_ids, db)
+    # Persist the project selection before the awaited model calls. Keeping this
+    # DELETE transaction open locks SQLite writers, including job progress ticks.
+    db.commit()
     plan = plan_deck(
         sources, body.title, body.preset, body.slide_count, instructions, brief=brief
     )
