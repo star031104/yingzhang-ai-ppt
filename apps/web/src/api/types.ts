@@ -170,6 +170,7 @@ export type ProjectWorkspace = {
     imageMode?: "off" | "auto";
     professionalBrief?: ProfessionalBrief;
   };
+  retryFullGeneration?: boolean;
   modelPlanning?: { model?: string; filledByBuiltinPlanner?: number; batchErrors?: string[] };
   modelUsage?: { inputTokens: number | null; outputTokens: number | null; requests: number; reportedRequests: number; unreportedRequests: number; source: "provider-reported"; costAvailable: false; models: { model: string; inputTokens: number | null; outputTokens: number | null; requests: number; reportedRequests: number; unreportedRequests: number }[] };
   orchestration: {
