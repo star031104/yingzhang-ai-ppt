@@ -66,6 +66,44 @@ class OpenAICompatibleClient:
             (time.perf_counter() - started) * 1000
         )
 
+    async def probe_chat_model(self, model: str) -> int:
+        """Test one model ID with a bounded real completion, independent of /models."""
+        try:
+            assert_current()
+            ensure_network_allowed(self.chat_url)
+        except ValueError as exc:
+            raise ProviderError(str(exc)) from exc
+        started = time.perf_counter()
+        try:
+            async with httpx.AsyncClient(
+                trust_env=not settings.local_only_mode, timeout=self.timeout
+            ) as client:
+                response = await client.post(
+                    self.chat_url,
+                    headers=self.headers,
+                    json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": "回复 OK"}],
+                        "max_tokens": 32,
+                        "stream": False,
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+        except httpx.HTTPStatusError as exc:
+            try:
+                detail = self._safe_error(exc.response.json())
+            except ValueError:
+                detail = "请检查模型 ID、密钥权限和服务状态"
+            raise ProviderError(f"服务返回 HTTP {exc.response.status_code}：{detail}") from exc
+        except (httpx.HTTPError, ValueError) as exc:
+            raise ProviderError(str(exc)) from exc
+        if not isinstance(data, dict) or data.get("error") or data.get("errors"):
+            raise ProviderError(self._safe_error(data))
+        if not isinstance(data.get("choices"), list) or not data["choices"]:
+            raise ProviderError("模型服务没有返回有效的对话结果")
+        return round((time.perf_counter() - started) * 1000)
+
     async def image_generation(
         self,
         model: str,

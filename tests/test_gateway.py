@@ -49,6 +49,33 @@ def test_discovers_models_before_saving_provider(client, monkeypatch):
     assert requested == ["image"]
 
 
+def test_probe_model_id_missing_from_catalog_without_saving(client, monkeypatch):
+    requested = []
+
+    async def fake_probe(_self, model_id):
+        requested.append(model_id)
+        return 19
+
+    monkeypatch.setattr("app.api.routes.OpenAICompatibleClient.probe_chat_model", fake_probe)
+    response = client.post(
+        "/api/v1/providers/probe-model",
+        json={
+            "base_url": "https://open.bigmodel.cn/api/paas/v4",
+            "api_key": "secret",
+            "model_id": "glm-4.7-flash",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "latency_ms": 19,
+        "models": ["glm-4.7-flash"],
+        "error": None,
+    }
+    assert requested == ["glm-4.7-flash"]
+    assert client.get("/api/v1/providers").json() == []
+
+
 def test_deleting_provider_removes_models_and_role_assignments(client, monkeypatch):
     monkeypatch.setattr("app.api.routes.secret_store.set", lambda ref, value: None)
     deleted = []

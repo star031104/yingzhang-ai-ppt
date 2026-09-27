@@ -13,6 +13,12 @@ export const discoverModels = (
     headers: jsonHeaders,
     body: JSON.stringify({ base_url, api_key: api_key || null, model_type }),
   });
+export const probeTextModel = (base_url: string, api_key: string, model_id: string) =>
+  json<DiscoverResult>("/providers/probe-model", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({ base_url, api_key: api_key || null, model_id }),
+  });
 export const createProvider = (body: {
   name: string;
   base_url: string;
