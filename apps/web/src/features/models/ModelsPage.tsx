@@ -4,6 +4,7 @@ import {
   createProvider,
   discoverModels,
   mapModelRole,
+  probeTextModel,
   registerModel,
   removeProvider,
   testImageModel,
@@ -54,6 +55,8 @@ export function ModelsPage({
       setStatus(
         isImage && !result.models.length
           ? "连接成功，但服务列表没有返回可识别的文生图模型。可以手动填写服务商提供的文生图模型 ID；图片编辑模型需要原图，不能替代文生图。"
+          : !isImage && !result.models.length
+            ? "连接成功，但服务列表没有返回文字模型。可填写官方文档中的模型 ID，保存前会测试实际调用。"
           : `连接成功，找到 ${result.models.length} 个候选模型。列表可见不代表已通过实际调用测试。`,
       );
     } catch (error) {
@@ -63,9 +66,15 @@ export function ModelsPage({
     }
   }
   async function save() {
-    if (!selected) return;
+    const modelId = selected.trim();
+    if (!modelId) return;
     setSaving(true);
     try {
+      if (!isImage) {
+        setStatus(`正在验证 ${modelId} 的实际对话调用…`);
+        const probe = await probeTextModel(form.url, form.key, modelId);
+        if (!probe.ok) throw new Error(`模型验证失败：${probe.error || "请检查模型 ID 和密钥权限"}`);
+      }
       const provider = await createProvider({
         name: form.name,
         base_url: form.url,
@@ -74,7 +83,7 @@ export function ModelsPage({
       const capabilities = isImage
         ? ["image_generation"]
         : ["chat", "structured_output", "long_context", ...(vision ? ["vision"] : [])];
-      const model = await registerModel(provider.id, selected, capabilities);
+      const model = await registerModel(provider.id, modelId, capabilities);
       if (isImage) {
         await mapModelRole("image_generation", model.id);
       } else {
@@ -85,8 +94,8 @@ export function ModelsPage({
       setStep(3);
       setStatus(
         isImage
-          ? `已保存 ${selected}，并设为默认生图模型`
-          : `已保存 ${selected}，并设为默认工作模型`,
+          ? `已保存 ${modelId}，并设为默认生图模型`
+          : `已验证并保存 ${modelId}，并设为默认工作模型`,
       );
       refresh();
     } catch (error) {
@@ -184,17 +193,18 @@ export function ModelsPage({
             <span className="number purple">02</span>
             <div>
               <h3>{isImage ? "选择生图模型" : "选择工作模型"}</h3>
-              <p>{isImage ? "筛选文生图候选，也支持手动填写模型 ID" : "测试成功后列出可用文字模型"}</p>
+              <p>{isImage ? "筛选文生图候选，也支持手动填写模型 ID" : "模型列表仅供参考，保存前会验证实际调用"}</p>
             </div>
           </div>
-          {found.length || (isImage && step >= 2) ? (
+          {step >= 2 ? (
             <>
               {found.length > 0 && <label>
                 可用模型
                 <select
-                  value={selected}
+                  value={found.includes(selected) ? selected : ""}
                   onChange={(e) => setSelected(e.target.value)}
                 >
+                  {!found.includes(selected) && <option value="" disabled>已手动填写模型 ID</option>}
                   {found.map((model) => (
                     <option key={model}>{model}</option>
                   ))}
@@ -203,6 +213,10 @@ export function ModelsPage({
               {isImage && <label>文生图模型 ID（可手动填写）
                 <input value={selected} onChange={event => setSelected(event.target.value.trim())} placeholder="例如：Qwen/Qwen-Image" />
                 <small>魔搭的模型列表可能不包含文生图模型，请以模型详情页的 API-Inference 示例为准。保存后点击“测试生图”验证权限及可用性。</small>
+              </label>}
+              {!isImage && <label>文字模型 ID（可手动填写）
+                <input value={selected} onChange={event => setSelected(event.target.value)} placeholder="例如：glm-4.7-flash" />
+                <small>模型未出现在列表中，不代表无法调用。请填写服务商文档中的准确 ID；保存前会发起一次简短对话，验证此密钥的实际权限。</small>
               </label>}
               {!isImage && <label className="check">
                 <input
@@ -221,8 +235,8 @@ export function ModelsPage({
                   : ["大纲规划", "材料分析", "页面生成", "内容修复"]
                 ).map((label) => <span key={label}>{label}</span>)}
               </div>
-              <button className="primary" onClick={save} disabled={saving || !selected}>
-                {isImage ? "保存并设为默认生图模型" : "保存并设为默认工作模型"}
+              <button className="primary" onClick={save} disabled={saving || !selected.trim()}>
+                {isImage ? "保存并设为默认生图模型" : "验证模型并保存为默认工作模型"}
               </button>
             </>
           ) : (
@@ -230,7 +244,7 @@ export function ModelsPage({
               title={isImage ? "等待生图服务测试" : "等待连接测试"}
               text={isImage
                 ? "填写服务地址和密钥，连接后筛选文生图候选，或手动填写模型 ID。"
-                : "填写左侧 API 地址和密钥，测试成功后即可选择文字模型。"}
+                : "填写左侧 API 地址和密钥。连接后可选列表模型，也可手动填写官方模型 ID。"}
             />
           )}
         </div>

@@ -84,6 +84,10 @@ class ProviderDiscovery(BaseModel):
     model_type: Literal["text", "image"] | None = None
 
 
+class ModelProbe(ProviderDiscovery):
+    model_id: str = Field(min_length=1, max_length=200)
+
+
 class JobCreate(BaseModel):
     kind: str = Field(min_length=1, max_length=80)
     project_id: str | None = None

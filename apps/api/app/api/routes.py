@@ -32,6 +32,7 @@ from app.schemas import (
     JobCreate,
     JobOut,
     ModelOut,
+    ModelProbe,
     ModelRegister,
     ProjectCreate,
     ProjectOut,
@@ -201,6 +202,21 @@ async def discover_provider(body: ProviderDiscovery):
     try:
         models, latency = await client.list_models(body.model_type)
         return ConnectionResult(ok=True, latency_ms=latency, models=models)
+    except ProviderError as exc:
+        return ConnectionResult(ok=False, latency_ms=0, models=[], error=str(exc))
+
+
+@router.post("/providers/probe-model", response_model=ConnectionResult)
+async def probe_provider_model(body: ModelProbe):
+    client = OpenAICompatibleClient(
+        str(body.base_url).rstrip("/"),
+        body.api_key,
+        body.extra_headers,
+        settings.request_timeout_seconds,
+    )
+    try:
+        latency = await client.probe_chat_model(body.model_id)
+        return ConnectionResult(ok=True, latency_ms=latency, models=[body.model_id])
     except ProviderError as exc:
         return ConnectionResult(ok=False, latency_ms=0, models=[], error=str(exc))
 
