@@ -89,10 +89,9 @@ flowchart LR
 
 ### 环境要求
 
-- Git
-- Python 3.11 或更高版本
-- Node.js 20 或更高版本（包含 npm）
-- Windows 10/11 可使用一键启动；macOS 与 Linux 使用手动方式
+- Git（仅克隆项目时需要）
+- Windows 10/11 可使用根目录的一键启动器；macOS 与 Linux 使用手动方式
+- Windows 首次启动需要网络、Microsoft Store 中的“应用安装程序”（提供 winget）；安装运行环境时可能出现 Windows 权限提示
 - 至少一个兼容 OpenAI API 的模型服务；可以是云端 API，也可以是本机服务
 
 ### Windows 一键运行
@@ -100,11 +99,17 @@ flowchart LR
 ```powershell
 git clone https://github.com/star031104/yingzhang-ai-ppt.git
 cd yingzhang-ai-ppt
-Copy-Item .env.example .env
+```
+
+双击项目根目录中的 **`启动映章.exe`**。也可以双击 `启动项目.cmd`，或在终端运行：
+
+```powershell
 ./启动项目.cmd
 ```
 
-启动脚本会检查运行环境、安装缺失依赖、构建前端、启动本地服务，并打开 `http://127.0.0.1:8000`。首次安装依赖需要网络。关闭浏览器不会停止后台服务；运行日志位于 `runtime/launcher/`。
+首次启动器会自动准备 uv 管理器、Python 3.12、Node.js LTS、锁定的 Python/npm 依赖和 Playwright Chromium，然后构建前端、启动本地服务并打开 `http://127.0.0.1:8000`。安装器需要网络；若系统没有 winget，请先从 Microsoft Store 安装“应用安装程序”。关闭浏览器不会停止后台服务；运行日志位于 `runtime/launcher/`。模型服务可在应用的模型设置中配置，无需预先创建 `.env` 文件。
+
+`.exe` 使用项目附带的 C# 源码构建。如需重建它，请在 Windows PowerShell 运行 `./scripts/build-launcher.ps1`（需要 .NET Framework 4.x 编译器）。
 
 如果 8000 端口已被占用：
 

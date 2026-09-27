@@ -12,6 +12,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows-launcher:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Parse launcher PowerShell scripts
+        shell: pwsh
+        run: |
+          $files = @('scripts/start-local.ps1', 'scripts/build-launcher.ps1', 'scripts/run-local-server.ps1')
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $file), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+          }
+      - name: Build Windows launcher executable
+        shell: pwsh
+        run: ./scripts/build-launcher.ps1
+
   backend:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
