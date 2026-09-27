@@ -23,6 +23,8 @@ def friendly_job_error(exc: Exception) -> str:
     if isinstance(exc, HTTPException):
         return str(exc.detail)
     text = str(exc).strip()
+    if "database is locked" in text.lower():
+        return "本地数据库暂时繁忙，任务已安全停止。请稍后重新发起；如果持续出现，请关闭其他正在使用此项目数据库的程序。"
     if "timeout" in text.lower() or "timed out" in text.lower():
         return "模型服务响应超时，任务已安全停止，请稍后重试或减少单次页数"
     if "<!doctype html" in text.lower() or "<html" in text.lower():
