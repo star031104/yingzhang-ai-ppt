@@ -107,7 +107,7 @@ cd yingzhang-ai-ppt
 ./启动项目.cmd
 ```
 
-首次启动器会自动准备 uv 管理器、Python 3.12、Node.js LTS、锁定的 Python/npm 依赖和 Playwright Chromium，然后构建前端、启动本地服务并打开 `http://127.0.0.1:8000`。安装器需要网络；若系统没有 winget，请先从 Microsoft Store 安装“应用安装程序”。关闭浏览器不会停止后台服务；运行日志位于 `runtime/launcher/`。模型服务可在应用的模型设置中配置，无需预先创建 `.env` 文件。
+首次启动器会自动准备 uv 管理器、Python 3.12、Node.js LTS、锁定的 Python/npm 依赖和 Playwright Chromium，然后构建前端、启动本地服务并打开 `http://127.0.0.1:8000`。旧工作区若存在因页面删除遗留的孤立候选稿或版本记录，启动器会先备份数据库到 `runtime/data/backups/`，再修复这些无法从现有页面访问的记录；其他数据库异常会停止启动并保留原数据。安装器需要网络；若系统没有 winget，请先从 Microsoft Store 安装“应用安装程序”。关闭浏览器不会停止后台服务；运行日志位于 `runtime/launcher/`。模型服务可在应用的模型设置中配置，无需预先创建 `.env` 文件。
 
 `.exe` 使用项目附带的 C# 源码构建。如需重建它，请在 Windows PowerShell 运行 `./scripts/build-launcher.ps1`（需要 .NET Framework 4.x 编译器）。
 
