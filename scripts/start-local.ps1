@@ -93,6 +93,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Python environment setup failed. Check your internet connection and try again.' }
     $pythonPath = Join-Path $projectRoot '.venv\Scripts\python.exe'
     if (-not (Test-Path -LiteralPath $pythonPath)) { throw 'uv finished without creating the project Python environment.' }
+    & $pythonPath (Join-Path $PSScriptRoot 'repair-local-database.py')
+    if ($LASTEXITCODE -ne 0) { throw 'Local database validation or repair failed. Review the error above before retrying.' }
 
     $lockFile = Join-Path $projectRoot 'package-lock.json'
     $npmStamp = Join-Path $launchRoot 'npm-lock.sha256'
