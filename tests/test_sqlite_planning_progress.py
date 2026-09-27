@@ -42,3 +42,23 @@ def test_planning_does_not_lock_progress_writes_while_awaiting_model(client, mon
     )
     assert response.status_code == 200, response.text
     assert writes == [True]
+
+
+def test_failed_full_job_keeps_options_for_retry_without_reupload(client):
+    project = client.post("/api/v1/projects", json={"name": "已有材料"}).json()
+    with SessionLocal() as db:
+        db.add(Job(
+            project_id=project["id"], kind="full", status="failed",
+            checkpoint={"workflow": {"payload": {
+                "title": "毕业答辩", "instructions": "突出研究结果", "preset": "academic",
+                "slide_count": 15, "skill_ids": [], "image_mode": "off",
+                "audience": "答辩委员会", "tone": "formal",
+            }}},
+        ))
+        db.commit()
+    response = client.get(f"/api/v1/projects/{project['id']}/workspace")
+    assert response.status_code == 200
+    options = response.json()["planOptions"]
+    assert options["title"] == "毕业答辩"
+    assert options["slideCount"] == 15
+    assert options["professionalBrief"]["audience"] == "答辩委员会"

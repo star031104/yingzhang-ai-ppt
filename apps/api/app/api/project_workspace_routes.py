@@ -147,6 +147,31 @@ def get_project_workspace(project_id: str, request: Request, db: Session = Depen
         for model, input_count, output_count, request_count, reported_requests, unreported_requests in usage_rows
     ]
     plan_options = copy.deepcopy((deck.reproducibility or {}).get("request", {})) if deck else {}
+    if not deck:
+        failed_full_job = db.scalar(
+            select(Job)
+            .where(Job.project_id == project_id, Job.kind == "full", Job.status == "failed")
+            .order_by(Job.created_at.desc())
+        )
+        payload = ((failed_full_job.checkpoint or {}).get("workflow") or {}).get("payload") if failed_full_job else None
+        if isinstance(payload, dict) and payload.get("title"):
+            plan_options = {
+                "title": payload["title"],
+                "instructions": payload.get("instructions", ""),
+                "preset": payload.get("preset", "academic"),
+                "slideCount": payload.get("slide_count", 12),
+                "skillIds": payload.get("skill_ids", []),
+                "imageMode": payload.get("image_mode", "off"),
+                "professionalBrief": {
+                    "profileId": payload.get("profile_id"),
+                    "profileRevision": payload.get("profile_revision"),
+                    "audience": payload.get("audience", ""),
+                    "objective": payload.get("objective", ""),
+                    "brandName": payload.get("brand_name", ""),
+                    "tone": payload.get("tone", "auto"),
+                    "durationMinutes": payload.get("duration_minutes"),
+                },
+            }
     binding = db.get(PersonalBinding, project_id) if not settings.public_test_mode else None
     personal_profile = db.get(PersonalProfile, binding.profile_id) if binding else None
     if personal_profile:

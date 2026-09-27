@@ -231,8 +231,9 @@ export function ProjectEditor({
         data?.gates?.enabled &&
         (data.gates.outline !== "approved" || data.gates.sample !== "approved"),
       );
+      const needsPlanning = !data?.slides.length;
       const job = await monitorJob(
-        pendingApproval
+        pendingApproval || needsPlanning
           ? await startFullGenerationJob(
               projectId,
               data?.planOptions.title || projectName,
@@ -381,7 +382,7 @@ export function ProjectEditor({
         <div className="generation-command__actions">
           <button disabled={busy || !title.trim()} onClick={saveSlide}>保存当前页</button>
           <button className="primary" disabled={busy} onClick={rebuild}>
-            {busy ? "正在处理…" : "重新生成全稿"}
+            {busy ? "正在处理…" : data.slides.length ? "重新生成全稿" : "从已上传材料重试生成"}
           </button>
         </div>
         {activeJob && <div className="generation-command__progress"><JobPageProgress job={activeJob} /></div>}
