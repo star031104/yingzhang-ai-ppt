@@ -1,6 +1,6 @@
 import asyncio
 
-from app.db.models import Job
+from app.db.models import DeckSpecRecord, Job
 from app.db.session import SessionLocal, engine
 from app.jobs.progress import friendly_job_error
 
@@ -59,6 +59,27 @@ def test_failed_full_job_keeps_options_for_retry_without_reupload(client):
     response = client.get(f"/api/v1/projects/{project['id']}/workspace")
     assert response.status_code == 200
     options = response.json()["planOptions"]
+    assert response.json()["retryFullGeneration"] is True
     assert options["title"] == "毕业答辩"
     assert options["slideCount"] == 15
     assert options["professionalBrief"]["audience"] == "答辩委员会"
+
+
+def test_failed_full_job_retries_planning_even_with_an_older_outline(client):
+    project = client.post("/api/v1/projects", json={"name": "已有旧大纲"}).json()
+    with SessionLocal() as db:
+        db.add(DeckSpecRecord(
+            project_id=project["id"], narrative={}, design_system={},
+            reproducibility={"request": {"title": "旧标题", "slideCount": 12}},
+        ))
+        db.add(Job(
+            project_id=project["id"], kind="full", status="failed",
+            checkpoint={"workflow": {"payload": {
+                "title": "本次标题", "slide_count": 15, "instructions": "新要求",
+            }}},
+        ))
+        db.commit()
+    workspace = client.get(f"/api/v1/projects/{project['id']}/workspace").json()
+    assert workspace["retryFullGeneration"] is True
+    assert workspace["planOptions"]["title"] == "本次标题"
+    assert workspace["planOptions"]["slideCount"] == 15
