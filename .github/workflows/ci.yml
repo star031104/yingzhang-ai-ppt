@@ -90,4 +90,5 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libreoffice-impress fonts-noto-cjk
       - run: uv sync --locked
       - run: npm ci
+      - run: npx playwright install --with-deps chromium
       - run: uv run --locked python scripts/verify-office-roundtrip.py
