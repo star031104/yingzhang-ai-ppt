@@ -11,7 +11,7 @@ import re
 from dataclasses import asdict, dataclass
 
 from app.intelligence.content_selection import concise_source_context, select_key_points
-from app.intelligence.retrieval import retrieve_source_context
+from app.intelligence.retrieval import retrieve_source_context, retrieve_source_context_async
 
 NAVIGATION_ROLES = {"cover", "agenda", "section", "questions"}
 
@@ -143,11 +143,7 @@ def _section_map(sources: list[dict]) -> dict[tuple[str, str], dict]:
     }
 
 
-def bounded_batch_context(
-    sources: list[dict], slides: list[dict], title: str, preset: str,
-    instructions: str, limit: int,
-) -> str:
-    """Build a small, page-specific evidence window instead of sending the whole document."""
+def _requested_sections(sources: list[dict], slides: list[dict]) -> tuple[dict, dict]:
     records = _section_map(sources)
     requested = {}
     for slide in slides:
@@ -156,8 +152,10 @@ def bounded_batch_context(
             key = (str(ref.get("document", "")), str(ref.get("section", "")))
             if key in records:
                 requested[key] = (requested.get(key, "") + " " + query).strip()
-    if not requested:
-        return retrieve_source_context(sources, title, preset, instructions, limit=limit)
+    return records, requested
+
+
+def _referenced_context(records: dict, requested: dict, limit: int) -> str:
     blocks, used = [], 0
     for index, (key, query) in enumerate(requested.items()):
         section = records[key]
@@ -170,6 +168,30 @@ def bounded_batch_context(
             blocks.append(header + text)
             used += len(header) + len(text)
     return "".join(blocks)
+
+
+def bounded_batch_context(
+    sources: list[dict], slides: list[dict], title: str, preset: str,
+    instructions: str, limit: int,
+) -> str:
+    """Build a small, page-specific evidence window instead of sending the whole document."""
+    records, requested = _requested_sections(sources, slides)
+    if not requested:
+        return retrieve_source_context(sources, title, preset, instructions, limit=limit)
+    return _referenced_context(records, requested, limit)
+
+
+async def bounded_batch_context_async(
+    sources: list[dict], slides: list[dict], title: str, preset: str,
+    instructions: str, limit: int, retriever=None,
+) -> str:
+    """Same window as :func:`bounded_batch_context`; unreferenced batches use hybrid retrieval."""
+    records, requested = _requested_sections(sources, slides)
+    if not requested:
+        return await retrieve_source_context_async(
+            sources, title, preset, instructions, limit=limit, retriever=retriever
+        )
+    return _referenced_context(records, requested, limit)
 
 
 def permitted_facts(evidence: dict, slides: list[dict], limit: int = 28) -> list[str]:

@@ -10,6 +10,7 @@ from app.db.models import Job, Project
 from app.db.session import SessionLocal
 from app.jobs.manager import JobCancelled, JobManager, job_manager
 from app.jobs.progress import friendly_job_error, job_view, set_job_stage
+from app.jobs.sqlite_writes import run_job_write_async
 from app.presentation_engine.service import EngineError
 from app.professional import append_stage_trace
 from app.workflows.bounded import BoundedWorkflowRunner, NodeContract
@@ -66,10 +67,10 @@ class ProjectJobService:
         self.workflow = workflow or BoundedWorkflowRunner()
 
     async def _set_page_event(self, job_id: str, event: dict[str, Any]) -> None:
-        with SessionLocal() as db:
+        def write(db: Session) -> dict[str, Any] | None:
             job = db.get(Job, job_id)
             if not job:
-                return
+                return None
             checkpoint = dict(job.checkpoint or {})
             counts = event.get("counts") or {}
             total = max(1, int(event.get("total") or 1))
@@ -101,14 +102,18 @@ class ProjectJobService:
             job.progress = progress
             job.checkpoint = checkpoint
             db.commit()
-            snapshot = job_view(job)
+            return job_view(job)
+
+        snapshot = await run_job_write_async(write)
+        if snapshot is None:
+            return
         await self.manager.publish(job_id, {**snapshot, "type": "page_progress"})
 
     async def _set_node_event(self, job_id: str, state: dict[str, Any]) -> None:
-        with SessionLocal() as db:
+        def write(db: Session) -> dict[str, Any] | None:
             job = db.get(Job, job_id)
             if not job:
-                return
+                return None
             checkpoint = dict(job.checkpoint or {})
             nodes = dict(checkpoint.get("nodes") or {})
             nodes[state["name"]] = state
@@ -142,7 +147,11 @@ class ProjectJobService:
             job.checkpoint = checkpoint
             job.progress = progress
             db.commit()
-            snapshot = job_view(job)
+            return job_view(job)
+
+        snapshot = await run_job_write_async(write)
+        if snapshot is None:
+            return
         await self.manager.publish(job_id, {**snapshot, "type": "progress"})
 
     async def _run_node(self, job_id: str, contract, input_value):
@@ -459,11 +468,11 @@ class ProjectJobService:
         )
 
     async def _cancel(self, job_id: str, project_id: str, exc: Exception) -> None:
-        with SessionLocal() as db:
+        def write(db: Session) -> dict[str, Any] | None:
             job = db.get(Job, job_id)
             project = db.get(Project, project_id)
             if not job:
-                return
+                return None
             checkpoint = append_stage_trace(
                 job.checkpoint or {}, "cancelled", str(exc), job.progress
             )
@@ -474,15 +483,20 @@ class ProjectJobService:
                 workflow = checkpoint.get("workflow") or {}
                 project.status = workflow.get("previousProjectStatus") or "ready"
             db.commit()
-            snapshot = job_view(job)
+            return job_view(job)
+
+        snapshot = await run_job_write_async(write)
+        if snapshot is None:
+            return
         await self.manager.publish(job_id, {**snapshot, "type": "cancelled"})
 
     async def _fail(self, job_id: str, project_id: str, exc: Exception) -> None:
         message = friendly_job_error(exc)
-        with SessionLocal() as db:
+
+        def write(db: Session) -> dict[str, Any] | None:
             job = db.get(Job, job_id)
             if job and job.status == "cancelled":
-                return
+                return None
             project = db.get(Project, project_id)
             if job:
                 checkpoint = append_stage_trace(
@@ -494,11 +508,15 @@ class ProjectJobService:
             if project:
                 project.status = "error"
             db.commit()
-            snapshot = (
+            return (
                 job_view(job)
                 if job
                 else {"status": "failed", "progress": 0, "checkpoint": {}, "error": message}
             )
+
+        snapshot = await run_job_write_async(write)
+        if snapshot is None:
+            return
         await self.manager.publish(job_id, {**snapshot, "type": "failed"})
 
     def resume(self, snapshot: dict[str, Any]):

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { json } from "../../api";
 import { Notice } from "../../components/Notice";
+import { usePreferences } from "../../store/preferences";
 import "./personalization.css";
 
 export type PersonalMemory = { id: string; key: string; value: string; label: string; description: string; status: string; origin: string; evidenceCount: number };
@@ -18,6 +19,7 @@ const SCENARIOS: Record<string, string> = { all: "所有场景", business: "商�
 
 export function PersonalizationPage() {
   const qc = useQueryClient();
+  const advanced = usePreferences((state) => state.advanced);
   const catalog = useQuery({ queryKey: ["personal-profiles"], queryFn: getPersonalProfiles });
   const [selected, setSelected] = useState("");
   const [name, setName] = useState("");
@@ -88,7 +90,7 @@ export function PersonalizationPage() {
       {feedback.data?.length ? feedback.data.map(item => { const p = item.features.proposal; return <article className="personal-feedback" key={item.id}><div><b>{p ? catalog.data?.labels[p.key] : "修改观察"}</b><p>{p ? catalog.data?.options[p.key]?.[p.value] : "没有可提取的长期规则"}</p><small>页面版本 {item.revision}；后续修改或回滚后建议失效。</small></div><button disabled={busy} onClick={() => void run(() => post(`/me/feedback/${item.id}/confirm`, {}), "已保存为场景经验。")}>以后也这样</button><button disabled={busy} onClick={() => void run(() => json(`/me/feedback/${item.id}`, { method: "DELETE" }), "本次修改不作为长期经验。")}>只改这次</button></article>; }) : <p className="field-help">目前没有待确认建议。</p>}
     </div>}
     {profile && <ExperiencePanel key={profile.id} profile={profile} paused={busy} />}
-    <AccountPanel />
+    {advanced && <AccountPanel />}
     <div className="panel personal-reset"><h3>记忆与清理</h3><p>清空后，新任务恢复默认流程，旧任务停止沿用被清除的记忆。现有作品、材料、模型设置和已下载备份保留。原生参考稿、案例和对照学习记录纳入清理。</p>
       <div className="personal-actions">{profile && <button disabled={busy} onClick={() => void preview("profile", profile.id)}>清空当前场景记忆</button>}<button className="danger-link" disabled={busy} onClick={() => void preview("all")}>清空全部个人记忆</button></div>
       <details><summary>需要连作品和模型设置一起清空？</summary><p>停止映章服务后，在项目根目录运行 <code>python scripts/reset-personal-workspace.py</code> 预览范围。确认后按提示执行恢复出厂；此操作会删除应用管理的作品、材料、生成技能和凭据。下载的备份与外部模型文件保留。</p></details>

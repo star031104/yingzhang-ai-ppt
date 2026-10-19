@@ -124,6 +124,8 @@ def get_project_workspace(project_id: str, request: Request, db: Session = Depen
         db.scalars(
             select(EvaluationRun)
             .where(EvaluationRun.project_id == project_id)
+            # Research evaluations (PPTEval/quiz/render) have their own list endpoint.
+            .where(EvaluationRun.suite != "research-v1")
             .order_by(EvaluationRun.created_at.desc())
         )
     )
@@ -192,6 +194,8 @@ def get_project_workspace(project_id: str, request: Request, db: Session = Depen
         "retryFullGeneration": retry_full_generation,
         "orchestration": (deck.reproducibility or {}).get("orchestration", {}) if deck else {},
         "modelPlanning": (deck.reproducibility or {}).get("model", {}) if deck else {},
+        "proposalValidation": _proposal_validation_view(deck),
+        "materialAnalysis": _material_analysis_view(project),
         "modelUsage": {
             "inputTokens": sum(item["inputTokens"] or 0 for item in model_usage) if any(item["inputTokens"] is not None for item in model_usage) else None,
             "outputTokens": sum(item["outputTokens"] or 0 for item in model_usage) if any(item["outputTokens"] is not None for item in model_usage) else None,
@@ -398,3 +402,27 @@ def calibrate(project_id: str, db: Session = Depends(get_db)):
     picks = [slides[0], slides[len(slides) // 2], slides[-1]]
     return {"slides": picks, "themes": ["forest", "ocean", "ember"], "recommended": "forest"}
 
+
+def _proposal_validation_view(deck) -> dict | None:
+    """Rule checks applied to model page proposals (summary plus the individual issues)."""
+    validation = (deck.reproducibility or {}).get("proposalValidation") if deck else None
+    if not isinstance(validation, dict):
+        return None
+    return {
+        "summary": validation.get("summary") or {},
+        "issues": list(validation.get("issues") or [])[:60],
+        "fallbackPositions": validation.get("fallbackPositions") or [],
+    }
+
+
+def _material_analysis_view(project) -> dict:
+    """Per-document section-role uncertainty from the saved content architecture."""
+    path = Path(project.artifact_path) / "analysis" / "content-architecture.json"
+    try:
+        analysis = json.loads(path.read_text(encoding="utf-8")).get("materialAnalysis") or {}
+    except (OSError, ValueError, AttributeError):
+        return {"documents": []}
+    return {"documents": [
+        {"name": item.get("name", ""), "kind": item.get("kind", ""), "uncertainRoles": item.get("uncertainRoles") or []}
+        for item in analysis.get("documents") or [] if isinstance(item, dict)
+    ]}

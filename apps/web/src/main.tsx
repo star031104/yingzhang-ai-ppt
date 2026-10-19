@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
 import { getPublicSession, loginPublic, logoutPublic, json } from "./api";
 import type { PublicSession } from "./api";
-import "./style.css";
+import "./styles/index.css";
 
 const queryClient = new QueryClient();
 
@@ -45,10 +45,10 @@ function Entry() {
   }
 
   if (connectionError) {
-    return <div className="entry-loading"><span>映</span><p>本地服务暂时无法连接，请先启动项目。</p><button onClick={() => window.location.reload()}>重新连接</button></div>;
+    return <div className="entry-loading"><span>映</span><p>本地服务暂时无法连接，请先启动映章。</p><button className="primary" onClick={() => window.location.reload()}>重新连接</button></div>;
   }
   if (!session) {
-    return <div className="entry-loading"><span>映</span><p>正在打开映章…</p></div>;
+    return <div className="entry-loading" aria-busy="true"><span>映</span><p><i className="spinner" />正在打开映章…</p></div>;
   }
   if ((session.publicMode || session.privateMode) && !session.authenticated) {
     return (
@@ -56,7 +56,7 @@ function Entry() {
         <section className="login-story">
           <div className="login-brand"><span>映</span><b>映章</b></div>
           <p className="kicker">协作测试空间</p>
-          <h1>把材料变成<br/><em>清楚、可信、好看的演示</em></h1>
+          <h1>把材料变成<br/><em>清楚、可信、好看</em>的演示</h1>
           <p>你可以创建项目、选择已安装技能、生成代表样张、微调页面，并下载 HTML、PPTX 与 PDF。</p>
           <div className="login-points"><span>来源可追溯</span><span>项目可继续编辑</span><span>成果可下载</span></div>
         </section>
@@ -68,7 +68,7 @@ function Entry() {
             <label>你的称呼<input name="name" required minLength={2} maxLength={30} placeholder="例如：林晓" autoComplete="name"/></label>
             <label>访问密码<input name="password" required minLength={session.setupRequired ? 12 : 1} maxLength={200} type="password" placeholder="请输入密码" autoComplete="current-password"/></label>
             {session.setupRequired && <label><input name="claim" type="checkbox" />将已有本机项目与经验交给此管理员账号</label>}
-            <button disabled={busy}>{busy ? "正在验证…" : "进入映章 →"}</button>
+            <button className="primary btn-lg" disabled={busy}>{busy ? "正在验证…" : "进入映章 →"}</button>
           </form>
           {message && <div className="login-message">{message}</div>}
           <small>模型密钥和管理设置不会向测试者开放。</small>

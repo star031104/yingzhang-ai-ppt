@@ -1,5 +1,5 @@
 {
-  "version": "professional-benchmark-v3",
+  "version": "professional-benchmark-v4",
   "families": [
     {"id": "academic", "fixture": "academic-thesis/fixture.md", "focus": ["证据覆盖", "图表表达", "可访问性"]},
     {"id": "business", "fixture": "business-report/fixture.md", "focus": ["品牌一致性", "决策表达", "跨软件交付"]},
@@ -13,6 +13,11 @@
     "plannedVisualMaturity": 60,
     "candidateFamilies": 4,
     "accessibility": 78,
-    "deliveryProfile": 80
+    "deliveryProfile": 80,
+    "pptevalContent": 4.5,
+    "pptevalDesign": 3.5,
+    "pptevalCoherence": 4.5,
+    "quizRetention": 70,
+    "quizDetailRetention": 75
   }
 }

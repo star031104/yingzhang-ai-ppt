@@ -1,0 +1,160 @@
+/* 我的项目 */
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-4);
+}
+.project-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-xs);
+  cursor: pointer;
+  transition:
+    transform var(--duration-base) var(--ease-out),
+    box-shadow var(--duration-base) var(--ease-out),
+    border-color var(--duration-base) var(--ease-out);
+}
+.project-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+.project-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.project-card.is-skeleton {
+  cursor: default;
+}
+.project-card.is-skeleton:hover {
+  transform: none;
+  box-shadow: var(--shadow-xs);
+}
+.cover {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 8;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border-subtle);
+  background: linear-gradient(140deg, #eef0ff, #f7f2ff);
+}
+.cover-1 {
+  background: linear-gradient(140deg, #e9f6f2, #eef4ff);
+}
+.cover-2 {
+  background: linear-gradient(140deg, #fbf3e8, #f4f0ff);
+}
+:root[data-theme="dark"] .cover { background: linear-gradient(140deg, #232445, #1d1d2c); }
+:root[data-theme="dark"] .cover-1 { background: linear-gradient(140deg, #16302a, #1b2133); }
+:root[data-theme="dark"] .cover-2 { background: linear-gradient(140deg, #32281a, #221f33); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cover { background: linear-gradient(140deg, #232445, #1d1d2c); }
+  :root:not([data-theme="light"]) .cover-1 { background: linear-gradient(140deg, #16302a, #1b2133); }
+  :root:not([data-theme="light"]) .cover-2 { background: linear-gradient(140deg, #32281a, #221f33); }
+}
+.cover-lines {
+  position: absolute;
+  inset: 18% 34% 18% 9%;
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--duration-slow) var(--ease-out);
+}
+.project-card:hover .cover-lines {
+  transform: translateY(-3px) rotate(-1deg);
+}
+.cover-lines i {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-muted);
+}
+.cover-lines i:first-child {
+  width: 70%;
+  height: 9px;
+  background: var(--accent-soft-hover);
+}
+.cover-lines i:nth-child(2) {
+  width: 90%;
+}
+.cover-lines i:nth-child(3) {
+  width: 55%;
+}
+.cover b {
+  position: absolute;
+  right: 14px;
+  bottom: 8px;
+  color: var(--text-primary);
+  font-size: 34px;
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  opacity: 0.12;
+}
+.project-card-body {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4);
+}
+.project-card h3 {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.project-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.project-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+.project-status i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-disabled);
+}
+.project-status.ready {
+  color: var(--success-text);
+}
+.project-status.ready i {
+  background: var(--success);
+}
+.project-id {
+  color: var(--text-disabled);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+.project-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-1);
+}
+.project-actions .open-project {
+  margin-left: calc(var(--space-2) * -1);
+  color: var(--accent-text);
+}
+.project-card:hover .open-project svg {
+  transform: translateX(2px);
+}
+.open-project svg {
+  transition: transform var(--duration-base) var(--ease-out);
+}

@@ -27,7 +27,16 @@ export type Skill = {
   description: string;
   kind: string;
 };
+export type ProposalIssue = {
+  position: number | null;
+  code: string;
+  severity: string;
+  field?: string;
+  message: string;
+  detail?: Record<string, unknown>;
+};
 export type SlideSpec = {
+  proposalIssues?: ProposalIssue[];
   imageGeneration?: { status: string; message?: string };
   id: string;
   position: number;
@@ -154,6 +163,14 @@ export type QualityReport = {
   };
 };
 export type ProjectWorkspace = {
+  proposalValidation?: {
+    summary: { pages?: number; accepted?: number; repaired?: number; fallback?: number; byCode?: Record<string, number> };
+    issues: ProposalIssue[];
+    fallbackPositions: number[];
+  } | null;
+  materialAnalysis?: {
+    documents: { name: string; kind?: string; uncertainRoles: { section?: string; title: string; role: string; confidence: number }[] }[];
+  };
   projectRole?: "owner" | "editor" | "reviewer" | "viewer";
   personalizationAvailable?: boolean;
   personalization?: { active: boolean; message?: string; rules: { key: string; label: string; description: string }[] };
@@ -278,4 +295,85 @@ export type ProjectStorageReport = {
   freeBytes: number;
   backupIncludesAllArtifacts: boolean;
   groups: Record<string, { bytes: number; files: number }>;
+};
+
+export type EvaluationKind = "ppteval" | "quiz" | "render";
+
+export type PptevalDimensionScore = { score: number; rationale: string; source: string; suggestions?: string[] };
+
+export type PptevalSlide = {
+  position: number;
+  slideId?: string;
+  title: string;
+  content: PptevalDimensionScore;
+  design: PptevalDimensionScore;
+  coherence: PptevalDimensionScore;
+  issues: { dimension: "content" | "design" | "coherence"; code: string; message: string; suggestion: string }[];
+};
+
+export type QuizTrace = {
+  id: string;
+  type: "detail" | "concept";
+  question: string;
+  expected: string;
+  answer: string;
+  supportedBySlide: number | null;
+  citedSlide?: number | null;
+  correct: boolean;
+};
+
+export type RenderReviewPage = {
+  page: number;
+  image: string;
+  slideId?: string;
+  title?: string;
+  score: number;
+  issues: { code: string; severity: "error" | "warning"; message: string; suggestion?: string }[];
+};
+
+export type ResearchEvaluationRun = {
+  id: string;
+  suite: string;
+  status: "running" | "completed" | "failed" | "interrupted";
+  kinds: EvaluationKind[];
+  createdAt: string | null;
+  fingerprint?: string;
+  stale: boolean;
+  exportMatchesCurrent?: boolean | null;
+  error?: string | null;
+  models?: { text?: string | null; vision?: string | null };
+  summary: {
+    content?: number; design?: number; coherence?: number; overall?: number; pptevalMode?: string;
+    retention?: number | null; detailRetention?: number | null; conceptRetention?: number | null; quizStatus?: string;
+    renderStatus?: string; renderErrors?: number; renderWarnings?: number; renderScore?: number | null;
+  };
+  ppteval?: {
+    mode: string;
+    overall: number;
+    deck: Record<"content" | "design" | "coherence", PptevalDimensionScore>;
+    slides: PptevalSlide[];
+    errors: string[];
+  };
+  quiz?: {
+    status: string;
+    message?: string;
+    generator?: string;
+    answerer?: string;
+    retention: number | null;
+    detailRetention?: number | null;
+    conceptRetention?: number | null;
+    questions: QuizTrace[];
+    missingFacts: { claim: string; missingValues: string[]; sourceRef?: { document: string; section: string } }[];
+    errors: string[];
+  };
+  render?: {
+    status: string;
+    mode?: string;
+    message?: string;
+    pageCount?: number;
+    slideCount?: number;
+    pages: RenderReviewPage[];
+    issues: ({ page: number } & RenderReviewPage["issues"][number])[];
+    errors?: string[];
+  };
 };

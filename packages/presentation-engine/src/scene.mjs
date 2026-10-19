@@ -1,5 +1,6 @@
 import {chromium} from 'playwright'
 import {pathToFileURL} from 'node:url'
+import {collectExportLayer} from './scene-export.mjs'
 
 let sharedBrowser=null
 let launchingBrowser=null
@@ -30,8 +31,8 @@ export async function captureScene(htmlPath,pngPath){
   const page=await context.newPage()
   await page.goto(pathToFileURL(htmlPath).href)
   await settlePage(page)
-  await page.screenshot({path:pngPath,animations:'disabled',timeout:30000})
-  return await page.evaluate(()=>{
+  if(pngPath)await page.screenshot({path:pngPath,animations:'disabled',timeout:30000})
+  const scene=await page.evaluate(()=>{
    const selector='[data-scene-type],h1,h2,h3,p,li,span,strong,b,figcaption,td,th,.flow-node,.agenda-card,.problem-card,.note-card,.insight-card,.conclusion-card,.split-grid aside,footer,img,svg,table,video,audio'
    const elements=[...document.querySelectorAll(selector)].filter(el=>{
     const r=el.getBoundingClientRect(),style=getComputedStyle(el)
@@ -62,6 +63,10 @@ export async function captureScene(htmlPath,pngPath){
     return {id:ids.get(el),type,tag:el.tagName.toLowerCase(),classes:[...el.classList],region,ancestorIds,isTextLeaf,text:(el.textContent??'').trim(),bbox:{x:r.x,y:r.y,width:r.width,height:r.height},measurement:{textClipped,scrollWidth:el.scrollWidth,scrollHeight:el.scrollHeight,clientWidth:el.clientWidth,clientHeight:el.clientHeight,assetMissing:el.tagName==='IMG'&&(!el.complete||el.naturalWidth===0)},style:{fontFamily:style.fontFamily,fontSize:parseFloat(style.fontSize)||0,fontWeight:style.fontWeight,color:style.color,backgroundColor:style.backgroundColor,backgroundStack,lineHeight:style.lineHeight,textAlign:style.textAlign,borderRadius:style.borderRadius},preferredExport:['text','shape','chart','diagram','table','video'].includes(type)?'native':type==='svg'?'svg':'raster',fallback:type==='text'||type==='shape'?['svg','raster']:['raster']}
    })}
   })
+  // Measured after the scoring nodes so materialised pseudo elements never
+  // change visible text, coverage or geometry scores.
+  try{scene.exportLayer=await page.evaluate(collectExportLayer)}catch(error){scene.exportLayer={version:'scene-export-v1',error:String(error?.message??error).slice(0,300),items:[]}}
+  return scene
   }catch(error){
    if(attempt===1)throw error
    await closeSceneBrowser()

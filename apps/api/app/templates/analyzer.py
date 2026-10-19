@@ -159,6 +159,75 @@ def _constraint_grammar(slides: list[dict]) -> dict:
     }
 
 
+METRIC_RE = re.compile(r"\d[\d,]*(?:\.\d+)?\s*(?:%|倍|万|亿|ms|秒|分钟|小时|MB|GB|元|人|个)")
+
+
+def _region_kind(shape) -> str:
+    if getattr(shape, "is_placeholder", False):
+        kind = shape.placeholder_format.type
+        if kind in {PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE}:
+            return "title"
+        if kind == PP_PLACEHOLDER.PICTURE:
+            return "picture"
+        if kind in {PP_PLACEHOLDER.CHART}:
+            return "chart"
+        if kind in {PP_PLACEHOLDER.TABLE}:
+            return "table"
+    if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+        return "picture"
+    if getattr(shape, "has_chart", False):
+        return "chart"
+    if getattr(shape, "has_table", False):
+        return "table"
+    if shape.shape_type in {MSO_SHAPE_TYPE.LINE, MSO_SHAPE_TYPE.GROUP}:
+        return "diagram"
+    if getattr(shape, "has_text_frame", False) and str(shape.text or "").strip():
+        return "body" if getattr(shape, "is_placeholder", False) else "text"
+    return "shape"
+
+
+def _layout_signature(slide, width: int, height: int, counts: Counter, text_length: int) -> dict:
+    """Text-free structural signature of one slide, reusable as a layout exemplar."""
+    regions = []
+    bullet_count = 0
+    metric_count = 0
+    for shape in slide.shapes:
+        if int(shape.width) <= 0 or int(shape.height) <= 0:
+            continue
+        kind = _region_kind(shape)
+        if kind == "shape":
+            continue
+        if getattr(shape, "has_text_frame", False) and kind in {"body", "text"}:
+            paragraphs = [p for p in shape.text_frame.paragraphs if "".join(r.text for r in p.runs).strip()]
+            bullet_count += len(paragraphs)
+            metric_count += len(METRIC_RE.findall(str(shape.text or "")))
+        if getattr(shape, "has_table", False):
+            metric_count += sum(
+                bool(METRIC_RE.search(cell.text) or re.fullmatch(r"\s*[-+]?\d[\d,.]*%?\s*", cell.text))
+                for row in shape.table.rows for cell in row.cells
+            )
+        regions.append({
+            "kind": kind,
+            "x": round(max(0.0, int(shape.left) / width), 3),
+            "y": round(max(0.0, int(shape.top) / height), 3),
+            "w": round(min(1.0, int(shape.width) / width), 3),
+            "h": round(min(1.0, int(shape.height) / height), 3),
+        })
+    regions.sort(key=lambda item: (item["y"], item["x"]))
+    density = "low" if text_length < 120 else "medium" if text_length < 420 else "high"
+    return {
+        "regions": regions[:16],
+        "textCount": counts["text"],
+        "bulletCount": bullet_count,
+        "metricCount": metric_count,
+        "pictureCount": counts["picture"],
+        "chartCount": counts["chart"],
+        "tableCount": counts["table"],
+        "diagramCount": counts["connector"],
+        "density": density,
+    }
+
+
 def analyze_reference_pptx(data: bytes) -> dict:
     deck = Presentation(io.BytesIO(data))
     fonts, sizes, colors = Counter(), Counter(), Counter()
@@ -166,6 +235,9 @@ def analyze_reference_pptx(data: bytes) -> dict:
     layout_by_function: dict[str, Counter] = defaultdict(Counter)
     slides = []
     width, height = int(deck.slide_width), int(deck.slide_height)
+    layout_indices = {
+        str(layout.part.partname): position for position, layout in enumerate(deck.slide_layouts)
+    }
     for index, slide in enumerate(deck.slides, 1):
         layout_name = slide.slide_layout.name
         layouts[layout_name] += 1
@@ -203,7 +275,9 @@ def analyze_reference_pptx(data: bytes) -> dict:
                 "title": title[:160],
                 "function": function,
                 "layout": layout_name,
+                "layoutIndex": layout_indices.get(str(slide.slide_layout.part.partname)),
                 "silhouette": _silhouette(slide, width, height, counts),
+                "signature": _layout_signature(slide, width, height, counts, text_length),
                 "textLength": text_length,
             }
         )
@@ -225,6 +299,9 @@ def analyze_reference_pptx(data: bytes) -> dict:
         "conclusion": FUNCTION_VARIANTS["conclusion"],
         "content": FUNCTION_VARIANTS["content"],
     }
+    from app.templates.layout_library import build_layout_library
+
+    constraint_grammar = _constraint_grammar(slides)
     return {
         "kind": "visual-skill",
         "version": "reference-analysis-v3",
@@ -242,7 +319,8 @@ def analyze_reference_pptx(data: bytes) -> dict:
             "exemplars": exemplars,
         },
         "variantByRole": variant_by_role,
-        "constraintGrammar": _constraint_grammar(slides),
+        "constraintGrammar": constraint_grammar,
         "slides": slides,
         "slideSize": {"width": width, "height": height},
+        "layoutLibrary": build_layout_library(slides, constraint_grammar, {"width": width, "height": height}),
     }

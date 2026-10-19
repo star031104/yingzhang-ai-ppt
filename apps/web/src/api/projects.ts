@@ -1,5 +1,5 @@
 import { base, json, jsonHeaders } from "./http";
-import type { Project, SlideSpec, ProfessionalPlatform, ProfessionalBrief, QualityReport, ProjectWorkspace, PublicSession, ProjectJob, ProjectStorageReport } from "./types";
+import type { Project, SlideSpec, ProfessionalPlatform, ProfessionalBrief, QualityReport, ProjectWorkspace, PublicSession, ProjectJob, ProjectStorageReport, EvaluationKind, ResearchEvaluationRun } from "./types";
 
 export const getPublicSession = () => json<PublicSession>("/auth/session");
 export const loginPublic = (name: string, password: string) =>
@@ -313,6 +313,18 @@ export const editImportedPowerPointObject = (projectId: string, slideIndex: numb
 export const importedPowerPointExportUrl = (projectId: string) => `${base}/projects/${encodeURIComponent(projectId)}/powerpoint/export`;
 export const runProfessionalEvaluation = (projectId: string) =>
   json<{ id: string; blindToken: string; metrics: ProjectWorkspace["evaluationRuns"][number]["metrics"] }>(`/projects/${projectId}/evaluations`, { method: "POST" });
+export const runResearchEvaluation = (projectId: string, kinds: EvaluationKind[], useModels = true) =>
+  json<ResearchEvaluationRun>(`/projects/${projectId}/evaluations`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({ kinds, use_models: useModels }),
+  });
+export const listResearchEvaluations = (projectId: string) =>
+  json<ResearchEvaluationRun[]>(`/projects/${projectId}/evaluations`);
+export const getResearchEvaluation = (projectId: string, runId: string) =>
+  json<ResearchEvaluationRun>(`/projects/${projectId}/evaluations/${encodeURIComponent(runId)}`);
+export const evaluationPageUrl = (projectId: string, runId: string, page: number) =>
+  `${base}/projects/${encodeURIComponent(projectId)}/evaluations/${encodeURIComponent(runId)}/pages/${page}`;
 export const blindEvaluationUrl = (token: string) => `${base}/evaluations/blind/${encodeURIComponent(token)}`;
 export const candidatePreviewUrl = (projectId: string, slideId: string, candidateId: string) =>
   `${base}/projects/${encodeURIComponent(projectId)}/slides/${encodeURIComponent(slideId)}/candidates/${encodeURIComponent(candidateId)}/preview`;

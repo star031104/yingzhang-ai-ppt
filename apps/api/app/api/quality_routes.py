@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import hashlib
 import json
@@ -18,6 +19,15 @@ from app.db.models import (
 from app.db.session import get_db
 from app.evaluation import build_evaluation_metrics
 from app.evaluation.fingerprints import export_source_fingerprint
+from app.evaluation.judges import resolve_judges
+from app.evaluation.runner import (
+    EVALUATION_TIMEOUT_SECONDS,
+    RESEARCH_SUITE,
+    content_fingerprint,
+    run_evaluations,
+    run_view,
+)
+from app.providers.usage import usage_project_id
 from app.slides import load_slides
 from app.sources import build_brief_source, load_sources
 from app.validation.accessibility import audit_accessibility
@@ -25,7 +35,7 @@ from app.validation.quality import build_professional_audit, validate_deck
 from app.validation.render_freshness import matches_render_stamp
 from app.validation.render_safety import hard_render_failures
 from app.validation.visual_maturity import assess_visual_maturity, variant_family
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -177,8 +187,125 @@ def validate(project_id: str, db: Session = Depends(get_db)):
     return report
 
 
+class EvaluationRequest(BaseModel):
+    kinds: list[Literal["ppteval", "quiz", "render"]] = Field(default_factory=list, max_length=3)
+    use_models: bool = True
+    max_questions: int = Field(default=18, ge=4, le=40)
+
+
+def _deck_reference(project_id: str, db: Session):
+    deck_record = db.get(DeckSpecRecord, project_id)
+    requested = (deck_record.reproducibility or {}).get("request", {}) if deck_record else {}
+    explicit_visual = bool(requested.get("skillIds") or (requested.get("professionalBrief") or {}).get("brandName"))
+    binding = db.get(PersonalBinding, project_id)
+    return (binding.snapshot or {}).get("reference") if binding and not explicit_visual else None
+
+
+def _evaluation_inputs(project_id: str, db: Session) -> tuple[list[dict], list[dict], str, str]:
+    slides = load_slides(project_id, db)
+    sources = load_sources(project_id, db)
+    deck_fingerprint = export_source_fingerprint(slides, _deck_reference(project_id, db))
+    return slides, sources, deck_fingerprint, content_fingerprint(deck_fingerprint, sources)
+
+
+def _latest_pptx(project_id: str, db: Session, deck_fingerprint: str) -> tuple[Path | None, bool]:
+    for record in db.scalars(
+        select(ExportRecord).where(ExportRecord.project_id == project_id, ExportRecord.format == "pptx")
+        .order_by(ExportRecord.created_at.desc())
+    ):
+        path = Path(record.artifact_path)
+        if path.is_file():
+            return path, (record.report or {}).get("sourceFingerprint") == deck_fingerprint
+    return None, False
+
+
+async def run_research_evaluation(project_id: str, body: EvaluationRequest, db: Session):
+    """PPTEval / PaperQuiz / render review. Read-only analysis, bounded by a timeout."""
+    project = project_or_404(project_id, db)
+    slides, sources, deck_fingerprint, fingerprint = _evaluation_inputs(project_id, db)
+    if not slides:
+        raise HTTPException(409, "请先生成页面后再运行评测")
+    quality = validate(project_id, db) if "ppteval" in body.kinds else {}
+    pptx, export_current = _latest_pptx(project_id, db, deck_fingerprint)
+    text_judge, vision_judge = resolve_judges(db) if body.use_models else (None, None)
+    row = EvaluationRun(project_id=project_id, suite=RESEARCH_SUITE, status="running", metrics={
+        "kinds": list(dict.fromkeys(body.kinds)), "fingerprint": fingerprint,
+        "exportMatchesCurrent": export_current if pptx else None,
+        "models": {"text": getattr(text_judge, "model_id", None), "vision": getattr(vision_judge, "model_id", None)},
+    })
+    db.add(row)
+    # Release the SQLite write lock before rendering or waiting on model calls.
+    db.commit()
+    output_root = Path(project.artifact_path) / "evaluations" / row.id
+    usage_token = usage_project_id.set(project_id)
+    try:
+        results = await asyncio.wait_for(run_evaluations(
+            body.kinds, slides=slides, sources=sources, quality_report=quality, output_root=output_root,
+            pptx=pptx, text_judge=text_judge, vision_judge=vision_judge, max_questions=body.max_questions,
+        ), EVALUATION_TIMEOUT_SECONDS)
+        row.metrics = {**row.metrics, **results}
+        row.status = "completed"
+    except TimeoutError:
+        row.metrics = {**row.metrics, "error": "评测超时，请减少评测项目或稍后重试"}
+        row.status = "failed"
+    except Exception as exc:  # noqa: BLE001 - persist the failure instead of leaving a running row
+        row.metrics = {**row.metrics, "error": f"评测失败：{str(exc)[:300]}"}
+        row.status = "failed"
+    finally:
+        usage_project_id.reset(usage_token)
+    flag_modified(row, "metrics")
+    db.commit()
+    return run_view(row, fingerprint)
+
+
+@router.get("/projects/{project_id}/evaluations")
+def list_research_evaluations(project_id: str, db: Session = Depends(get_db)):
+    project_or_404(project_id, db)
+    *_, fingerprint = _evaluation_inputs(project_id, db)
+    rows = db.scalars(
+        select(EvaluationRun).where(EvaluationRun.project_id == project_id, EvaluationRun.suite == RESEARCH_SUITE)
+        .order_by(EvaluationRun.created_at.desc()).limit(20)
+    )
+    return [run_view(row, fingerprint, detail=False) for row in rows]
+
+
+def _research_run(project_id: str, run_id: str, db: Session) -> EvaluationRun:
+    row = db.get(EvaluationRun, run_id)
+    if not row or row.project_id != project_id or row.suite != RESEARCH_SUITE:
+        raise HTTPException(404, "评测记录不存在")
+    return row
+
+
+@router.get("/projects/{project_id}/evaluations/{run_id}")
+def get_research_evaluation(project_id: str, run_id: str, db: Session = Depends(get_db)):
+    project_or_404(project_id, db)
+    row = _research_run(project_id, run_id, db)
+    *_, fingerprint = _evaluation_inputs(project_id, db)
+    return run_view(row, fingerprint)
+
+
+@router.get("/projects/{project_id}/evaluations/{run_id}/pages/{page}")
+def research_evaluation_page(project_id: str, run_id: str, page: int, db: Session = Depends(get_db)):
+    project = project_or_404(project_id, db)
+    row = _research_run(project_id, run_id, db)
+    if not 1 <= page <= 300:
+        raise HTTPException(404, "页面不存在")
+    target = Path(project.artifact_path) / "evaluations" / row.id / "render" / f"page-{page}.png"
+    if not target.is_file():
+        raise HTTPException(404, "该页尚未渲染")
+    return FileResponse(target, media_type="image/png")
+
+
 @router.post("/projects/{project_id}/evaluations", status_code=201)
-def run_professional_evaluation(project_id: str, db: Session = Depends(get_db)):
+async def run_professional_evaluation(
+    project_id: str, body: EvaluationRequest | None = Body(default=None), db: Session = Depends(get_db),
+):
+    if body and body.kinds:
+        return await run_research_evaluation(project_id, body, db)
+    return professional_evaluation(project_id, db)
+
+
+def professional_evaluation(project_id: str, db: Session):
     project = project_or_404(project_id, db)
     quality = validate(project_id, db)
     imported = db.scalar(select(ImportedDeck).where(ImportedDeck.project_id == project_id))

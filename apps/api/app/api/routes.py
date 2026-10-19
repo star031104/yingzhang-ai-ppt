@@ -61,6 +61,7 @@ ROLE_REQUIREMENTS = {
     "vision_critic": {"vision"},
     "embedding": {"embedding"},
     "image_generation": {"image_generation"},
+    "tts": {"tts"},
 }
 
 

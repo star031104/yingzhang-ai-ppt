@@ -62,7 +62,7 @@ async def lifespan(_):
 app = FastAPI(
     title="映章 API",
     description="把材料变成有章法的演示",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
     docs_url=None if settings.public_test_mode else "/docs",
     redoc_url=None if settings.public_test_mode else "/redoc",

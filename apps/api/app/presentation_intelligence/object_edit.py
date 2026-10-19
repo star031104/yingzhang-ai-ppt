@@ -3,10 +3,32 @@ import re
 
 ALLOWED_TARGETS = {"title", "message", "bullet", "bullets", "visual"}
 ALLOWED_OPERATIONS = {"replace", "append", "delete", "move"}
+VISUAL_TYPES = {"chart", "table", "diagram", "typography", "source-image", "generated-image"}
+# Layout variants an explicit edit may pin. They are rendered by the presentation
+# engine; anything else is rejected so a request cannot smuggle arbitrary values.
+EDITABLE_VARIANTS = {
+    "three-stage", "workflow", "process", "timeline", "layered-architecture", "pipeline",
+    "hub-spoke", "chart-focus", "comparison-bars", "table-highlight", "metric-wall",
+    "scorecard", "before-after", "two-column", "content-list", "evidence-brief", "big-statement",
+}
 
 
-def infer_edit_target(instruction: str) -> dict:
+def infer_edit_target(instruction: str, candidates: list[dict] | None = None) -> dict:
+    """Infer which object an instruction addresses.
+
+    When ``candidates`` is given (e.g. the objects inside a selected region), the
+    result is always one of them: an explicit mention wins, otherwise the first
+    candidate (the one with the largest overlap) is used.
+    """
     text = instruction.strip()
+    if candidates:
+        inferred = infer_edit_target(text)
+        for candidate in candidates:
+            if candidate.get("kind") == inferred["kind"] and (
+                inferred["kind"] != "bullet" or candidate.get("index") == inferred.get("index")
+            ):
+                return dict(candidate)
+        return dict(candidates[0])
     bullet = re.search(r"第\s*([一二三四五六七八九十\d]+)\s*(?:个|条)?要点", text)
     if bullet:
         raw = bullet.group(1)
@@ -68,12 +90,24 @@ def apply_object_edit(
         bullets = bullets + values if operation == "append" else ([] if operation == "delete" else values)
     else:
         before = dict(result.get("visualIntent") or {})
-        if not isinstance(value, str) or value not in {"chart", "table", "diagram", "typography", "source-image", "generated-image"}:
+        if not isinstance(value, str) or value not in VISUAL_TYPES:
             raise ValueError("视觉对象只能切换到受支持的语义类型")
         visual = dict(result.get("visualIntent") or {})
         visual["primaryVisual"] = value
-        visual.pop("selectedVariant", None)
-        visual["variantSelectionSource"] = "object-edit"
+        variant = target.get("variant")
+        if variant is not None:
+            if variant not in EDITABLE_VARIANTS:
+                raise ValueError("不支持的页面版式")
+            # An explicit layout request is a user decision: pin it so the
+            # renderer keeps it instead of re-ranking candidates.
+            visual["selectedVariant"] = variant
+            visual["variantSelectionSource"] = "user"
+            visual["archetypeCandidates"] = [variant, *[
+                item for item in visual.get("archetypeCandidates") or [] if item != variant
+            ]][:5]
+        else:
+            visual.pop("selectedVariant", None)
+            visual["variantSelectionSource"] = "object-edit"
         result["visualIntent"] = visual
     content["bullets"] = [str(item).strip() for item in bullets if str(item).strip()][:8]
     result["content"] = content

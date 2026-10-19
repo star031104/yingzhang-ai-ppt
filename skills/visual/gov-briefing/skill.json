@@ -1,0 +1,11 @@
+{
+  "id": "gov-briefing",
+  "version": "1.0.0",
+  "kind": "visual",
+  "name": "政务汇报 · 庄重清晰",
+  "description": "中国红与金色点缀、居中标题和规整版心，适合工作汇报、政策解读与项目申报答辩。",
+  "entrypoint": "SKILL.md",
+  "permissions": {
+    "executeScripts": false
+  }
+}

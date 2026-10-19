@@ -8,9 +8,10 @@ if settings.database_url.startswith("sqlite:///") and ":memory:" not in settings
     Path(settings.database_url.removeprefix("sqlite:///")).resolve().parent.mkdir(
         parents=True, exist_ok=True
     )
+SQLITE_BUSY_TIMEOUT_MS = settings.sqlite_busy_timeout_ms
 engine = create_engine(
     settings.database_url,
-    connect_args={"check_same_thread": False, "timeout": 30}
+    connect_args={"check_same_thread": False, "timeout": SQLITE_BUSY_TIMEOUT_MS / 1000}
     if settings.database_url.startswith("sqlite") else {},
 )
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
@@ -18,12 +19,15 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 if settings.database_url.startswith("sqlite"):
     @event.listens_for(engine, "connect")
-    def enable_secure_delete(connection, _record):
-        # Ordinary memory rows must not remain in SQLite free pages after DELETE.
-        connection.execute("PRAGMA busy_timeout=30000")
+    def configure_sqlite_connection(connection, _record):
+        # Bounded wait for a competing writer; job writes add their own retry on top.
+        connection.execute(f"PRAGMA busy_timeout={int(SQLITE_BUSY_TIMEOUT_MS)}")
         if ":memory:" not in settings.database_url:
             # Readers and brief progress writes can proceed during generation.
             connection.execute("PRAGMA journal_mode=WAL")
+            # WAL + NORMAL stays durable across application crashes and shortens commits.
+            connection.execute("PRAGMA synchronous=NORMAL")
+        # Ordinary memory rows must not remain in SQLite free pages after DELETE.
         connection.execute("PRAGMA secure_delete=ON")
         connection.execute("PRAGMA foreign_keys=ON")
 

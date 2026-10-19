@@ -104,6 +104,55 @@ class OpenAICompatibleClient:
             raise ProviderError("模型服务没有返回有效的对话结果")
         return round((time.perf_counter() - started) * 1000)
 
+    async def speech(
+        self,
+        model: str,
+        text: str,
+        *,
+        voice: str | None = None,
+        response_format: str | None = None,
+        speed: float | None = None,
+    ) -> bytes:
+        """Synthesize narration through the OpenAI-compatible ``/audio/speech`` endpoint."""
+        url = self.base_url + "/audio/speech"
+        payload: dict = {
+            "model": model,
+            "input": text,
+            "voice": voice or settings.tts_voice,
+            "response_format": response_format or settings.tts_format,
+        }
+        if speed is not None:
+            payload["speed"] = speed
+        try:
+            assert_current()
+            ensure_network_allowed(url)
+        except ValueError as exc:
+            raise ProviderError(str(exc)) from exc
+        try:
+            async with httpx.AsyncClient(
+                trust_env=not settings.local_only_mode, timeout=max(self.timeout, 120.0)
+            ) as client:
+                response = await client.post(url, headers=self.headers, json=payload)
+                response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            try:
+                detail = self._safe_error(exc.response.json())
+            except ValueError:
+                detail = "请检查语音模型 ID、音色和密钥权限"
+            raise ProviderError(f"语音服务返回 HTTP {exc.response.status_code}：{detail}") from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(str(exc).strip() or type(exc).__name__) from exc
+        content_type = response.headers.get("content-type", "").lower()
+        if "json" in content_type or "text/" in content_type:
+            try:
+                detail = self._safe_error(response.json())
+            except ValueError:
+                detail = "语音服务没有返回音频数据"
+            raise ProviderError(detail)
+        if not response.content:
+            raise ProviderError("语音服务返回了空音频")
+        return response.content
+
     async def image_generation(
         self,
         model: str,
@@ -312,6 +361,36 @@ class OpenAICompatibleClient:
             await record_usage()
             detail = str(exc).strip() or type(exc).__name__
             raise ProviderError(detail) from exc
+
+    async def embeddings(self, model: str, inputs: list[str]) -> list[list[float]]:
+        """Embed texts through the OpenAI-compatible ``/embeddings`` endpoint, in input order."""
+        url = self.base_url + "/embeddings"
+        try:
+            assert_current()
+            ensure_network_allowed(url)
+        except ValueError as exc:
+            raise ProviderError(str(exc)) from exc
+        try:
+            async with httpx.AsyncClient(trust_env=not settings.local_only_mode, timeout=self.timeout) as client:
+                response = await client.post(url, headers=self.headers, json={"model": model, "input": list(inputs)})
+                response.raise_for_status()
+                data = response.json()
+        except httpx.HTTPStatusError as exc:
+            try:
+                detail = self._safe_error(exc.response.json())
+            except ValueError:
+                detail = "请检查向量模型 ID、密钥权限和服务状态"
+            raise ProviderError(f"服务返回 HTTP {exc.response.status_code}：{detail}") from exc
+        except (httpx.HTTPError, ValueError) as exc:
+            raise ProviderError(str(exc).strip() or type(exc).__name__) from exc
+        if not isinstance(data, dict) or data.get("error") or not isinstance(data.get("data"), list):
+            raise ProviderError(self._safe_error(data))
+        items = [item for item in data["data"] if isinstance(item, dict)]
+        items.sort(key=lambda item: item.get("index", 0) if isinstance(item.get("index"), int) else 0)
+        vectors = [item.get("embedding") for item in items]
+        if len(vectors) != len(inputs) or not all(isinstance(vector, list) and vector for vector in vectors):
+            raise ProviderError("向量模型返回的结果数量与输入不一致")
+        return vectors
 
     async def vision_completion(
         self,

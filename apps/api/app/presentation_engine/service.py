@@ -12,11 +12,28 @@ class EngineError(RuntimeError):
     pass
 
 
+def export_report_path(output: Path) -> Path:
+    """Sidecar written by the engine's pptx command (per-slide renderer and fallbacks)."""
+    return output.with_suffix(".export.json")
+
+
+def load_export_report(output: Path) -> dict | None:
+    try:
+        return json.loads(export_report_path(output).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
 class PresentationEngine:
     def __init__(self):
         self.cli = Path("packages/presentation-engine/src/cli.mjs").resolve()
 
-    def run(self, command: str, slides: list[dict], output: Path) -> None:
+    def run(self, command: str, slides: list[dict], output: Path, *, scene_root: Path | None = None) -> None:
+        """Run an engine command. ``scene_root`` points the pptx command at the
+        rendered candidates (``<root>/slides/<position>/<variant>.scene.json``) so the
+        exported PPTX follows the measured geometry of the selected HTML candidates."""
+        # Only forward the option when used, keeping _run's call shape stable.
+        options = {"scene_root": scene_root} if scene_root is not None else {}
         if generation_snapshot.get():
             assert_current()
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -24,7 +41,7 @@ class PresentationEngine:
                 staged = Path(folder) / output.name
                 if command.startswith("assemble") and output.is_dir():
                     shutil.copytree(output, staged)
-                self._run(command, slides, staged)
+                self._run(command, slides, staged, **options)
                 with lock:
                     assert_current()
                     if output.is_dir():
@@ -32,18 +49,23 @@ class PresentationEngine:
                     elif output.exists():
                         output.unlink()
                     staged.replace(output)
+                    if export_report_path(staged).is_file():
+                        export_report_path(staged).replace(export_report_path(output))
             return
         with lock:
             assert_current()
-        self._run(command, slides, output)
+        self._run(command, slides, output, **options)
         assert_current()
 
-    def _run(self, command: str, slides: list[dict], output: Path) -> None:
+    def _run(self, command: str, slides: list[dict], output: Path, *, scene_root: Path | None = None) -> None:
         output.parent.mkdir(parents=True, exist_ok=True)
         spec_path = output.parent / "slides.input.json"
         spec_path.write_text(json.dumps(slides, ensure_ascii=False, indent=2), encoding="utf-8")
+        arguments = ["node", str(self.cli), command, str(spec_path), str(output)]
+        if command == "pptx" and scene_root is not None:
+            arguments.append(str(scene_root))
         result = subprocess.run(
-            ["node", str(self.cli), command, str(spec_path), str(output)],
+            arguments,
             capture_output=True,
             text=True,
             encoding="utf-8",

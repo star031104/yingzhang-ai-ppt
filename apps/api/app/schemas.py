@@ -11,9 +11,10 @@ ModelRole = Literal[
     "research",
     "embedding",
     "image_generation",
+    "tts",
 ]
 Capability = Literal[
-    "chat", "vision", "structured_output", "embedding", "image_generation", "long_context"
+    "chat", "vision", "structured_output", "embedding", "image_generation", "long_context", "tts"
 ]
 
 

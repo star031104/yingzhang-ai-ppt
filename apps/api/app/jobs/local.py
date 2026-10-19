@@ -9,6 +9,7 @@ from app.config import settings
 from app.db.models import Job
 from app.db.session import SessionLocal
 from app.jobs.contracts import JobSnapshot
+from app.jobs.sqlite_writes import run_job_write
 from sqlalchemy import select
 from starlette.websockets import WebSocketDisconnect
 
@@ -43,7 +44,7 @@ class SQLiteJobStore:
             return [job_snapshot(job) for job in jobs]
 
     def save(self, snapshot: JobSnapshot) -> JobSnapshot | None:
-        with SessionLocal() as db:
+        def write(db) -> JobSnapshot | None:
             job = db.get(Job, snapshot["id"])
             if not job:
                 return None
@@ -53,6 +54,8 @@ class SQLiteJobStore:
             job.error = snapshot["error"]
             db.commit()
             return job_snapshot(job)
+
+        return run_job_write(write)
 
 
 class AsyncioJobExecutor:

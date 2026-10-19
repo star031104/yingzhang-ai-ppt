@@ -1,8 +1,8 @@
 from typing import Any
 
 from app.db.models import Job
-from app.db.session import SessionLocal
 from app.jobs.manager import JobManager, job_manager
+from app.jobs.sqlite_writes import run_job_write_async
 from app.professional import append_stage_trace
 from fastapi import HTTPException
 
@@ -40,14 +40,19 @@ async def set_job_stage(
     manager: JobManager = job_manager,
 ) -> None:
     manager.ensure_active(job_id)
-    with SessionLocal() as db:
+
+    def write(db) -> dict[str, Any] | None:
         job = db.get(Job, job_id)
         if not job:
-            return
+            return None
         checkpoint = append_stage_trace(job.checkpoint or {}, stage, label, progress)
         job.status = "running"
         job.progress = progress
         job.checkpoint = checkpoint
         db.commit()
-        snapshot = job_view(job)
+        return job_view(job)
+
+    snapshot = await run_job_write_async(write)
+    if snapshot is None:
+        return
     await manager.publish(job_id, {**snapshot, "type": "progress"})

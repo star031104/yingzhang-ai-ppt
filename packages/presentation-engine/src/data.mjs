@@ -106,3 +106,61 @@ export function transitionDataset(items){
   {name:'现值',labels:rows.map(row=>row.label),values:rows.map(row=>row.after)}],unit,isPercent:unit==='%',
   isRatio:!unit&&values.every(value=>value>=0&&value<=1),axisMin:Math.min(0,...values),axisMax:unit==='%'&&max<=100?100:max||1}
 }
+
+// Numeric table whose columns may carry different units (e.g. revenue + growth).
+// Every row must provide exactly one value per column; otherwise the evidence
+// stays in a table instead of a chart.
+export function numericTableDataset(items,{minRows=2}={}){
+ if((items??[]).some(item=>/→|->|➡|(?:从|由)\s*[-+−]?\d/.test(String(item))))return null
+ const rows=metricRows(items)
+ if(rows.length<minRows||!rows.length||rows.some(row=>!row.pairs.length||row.detail))return null
+ const names=[...new Set(rows.flatMap(row=>row.pairs.map(pair=>pair.name)))]
+ if(rows.some(row=>names.some(name=>row.pairs.filter(pair=>pair.name===name).length!==1)))return null
+ const columns=names.map(name=>{
+  const pairs=rows.map(row=>row.pairs.find(pair=>pair.name===name))
+  const units=new Set(pairs.map(pair=>pair.unit))
+  return units.size===1?{name,unit:[...units][0],values:pairs.map(pair=>pair.value)}:null
+ })
+ if(columns.some(column=>!column))return null
+ return {labels:rows.map(row=>row.label),columns}
+}
+
+const CN_DIGITS={零:0,一:1,二:2,两:2,三:3,四:4,五:5,六:6,七:7,八:8,九:9,十:10}
+const cnNumber=value=>{
+ if(/^\d+$/.test(value))return Number(value)
+ if(value.length===1)return CN_DIGITS[value]??NaN
+ if(value.startsWith('十'))return 10+(CN_DIGITS[value[1]]??0)
+ if(value.length===2&&value.endsWith('十'))return (CN_DIGITS[value[0]]??NaN)*10
+ if(value.length===3&&value[1]==='十')return (CN_DIGITS[value[0]]??NaN)*10+(CN_DIGITS[value[2]]??NaN)
+ return NaN
+}
+const MONTHS=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec']
+
+// Sort key for a time-like or ordinal label, or null when the label is categorical.
+export function orderedLabelKey(label){
+ const text=String(label??'').trim()
+ let match
+ if((match=text.match(/^(?:FY\s*)?'?(\d{4}|\d{2})\s*(?:年度?|FY)?$/i)))return Number(match[1].length===2?`20${match[1]}`:match[1])
+ if((match=text.match(/^(?:(\d{4})\s*年?\s*)?(?:Q([1-4])|第?([一二三四1-4])季度)$/i)))return Number(match[1]??0)*10+Number(match[2]??cnNumber(match[3]))
+ if((match=text.match(/^(?:(\d{4})\s*年\s*)?(\d{1,2})\s*月份?$/)))return Number(match[1]??0)*100+Number(match[2])
+ if((match=text.match(/^(\d{4})[-/.](\d{1,2})(?:[-/.](\d{1,2}))?$/)))return Number(match[1])*10000+Number(match[2])*100+Number(match[3]??0)
+ if((match=text.match(/^第\s*([一二两三四五六七八九十\d]+)\s*(?:年|季度?|期|阶段|周|月|天|轮|批|代|版|步)$/)))return cnNumber(match[1])
+ if((match=text.match(/^(?:day|week|month|year|wk|d|w|m)[\s-]?(\d+)$/i)))return Number(match[1])
+ if((match=text.match(/^v(\d+(?:\.\d+)?)$/i)))return Number(match[1])
+ const month=MONTHS.indexOf(text.slice(0,3).toLowerCase())
+ if(month>=0&&/^[a-z]+\.?$/i.test(text))return month+1
+ return null
+}
+
+export function labelsAreOrdered(labels){
+ if(!Array.isArray(labels)||labels.length<3)return false
+ const keys=labels.map(orderedLabelKey)
+ return keys.every(key=>Number.isFinite(key))&&keys.every((key,index)=>!index||key>keys[index-1])
+}
+
+// Highest number of decimals used in the evidence, so labels keep source precision.
+export function sourceDecimals(items){
+ let decimals=0
+ for(const match of String((items??[]).join(' ')).matchAll(/\d+\.(\d+)/g))decimals=Math.max(decimals,match[1].length)
+ return Math.min(4,decimals)
+}

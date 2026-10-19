@@ -4,88 +4,24 @@ import uuid
 from collections import Counter
 
 from app.intelligence.content_selection import section_understanding, select_key_points
+from app.intelligence.contract_library import (
+    ACADEMIC_CONTRACT_LIBRARY,
+    ACADEMIC_PRESETS,
+    BUSINESS_PLAN_CONTRACT_LIBRARY,
+    PHASE_LABELS,
+    general_contracts,
+    preset_library,
+)
 from app.intelligence.evidence import extract_evidence_graph
+from app.intelligence.role_classifier import ROLE_PATTERNS, classify_section  # noqa: F401
 from app.presentation_intelligence.layout_planner import plan_deck_layouts
 
-ROLE_PATTERNS = [
-    ("problem", re.compile(r"problem|challenge|motivation|痛点|问题|挑战|动机|缺口|风险", re.IGNORECASE)),
-    ("method", re.compile(r"method|approach|algorithm|方法|方案|算法|流程|构建|产品服务|功能模块|市场营销|推广|运营", re.IGNORECASE)),
-    ("architecture", re.compile(r"architecture|framework|system|架构|框架|系统|技术路线|产品概况|角色协同", re.IGNORECASE)),
-    ("comparison", re.compile(r"comparison|baseline|related work|对比|基线|相关工作|国内外|竞品|竞争|行业分析", re.IGNORECASE)),
-    ("insight", re.compile(r"ablation|analysis|error|消融|洞察|误差|讨论|局限|风险对冲", re.IGNORECASE)),
-    ("data", re.compile(r"experiment|result|evaluation|metric|实验|结果|评估|指标|性能|财务|现金流|销售预测|收入|资金|资本结构", re.IGNORECASE)),
-    ("evidence", re.compile(r"evidence|proof|case|证据|案例|数据集|团队|组织|公司管理", re.IGNORECASE)),
-    ("conclusion", re.compile(r"conclusion|discussion|limitation|future|结论|讨论|局限|展望|创新", re.IGNORECASE)),
-    ("background", re.compile(r"abstract|introduction|background|摘要|引言|背景|现状|意义", re.IGNORECASE)),
-]
 ROLE_LABELS = {
     "agenda": "内容导览", "section": "章节过渡", "background": "研究背景", "problem": "核心问题",
     "method": "研究方法", "architecture": "系统架构", "evidence": "证据链路",
     "data": "实验结果", "comparison": "对比分析", "insight": "关键洞察",
     "conclusion": "结论与展望", "questions": "问答交流", "content": "核心内容",
 }
-
-PHASE_LABELS = {
-    "context": "第一部分｜研究背景与目标",
-    "method": "第二部分｜技术方案与系统实现",
-    "evaluation": "第三部分｜实验设计与结果验证",
-}
-
-ACADEMIC_CONTRACT_LIBRARY = {
-    "context": [
-        {"role": "background", "responsibility": "用事实说明研究背景、现实场景与研究价值", "targets": ["background"]},
-        {"role": "comparison", "responsibility": "比较现有研究并明确仍未解决的技术缺口", "targets": ["comparison", "background"]},
-        {"role": "problem", "responsibility": "把研究问题拆成目标、任务边界与可验证贡献", "targets": ["problem", "architecture", "conclusion"]},
-        {"role": "evidence", "responsibility": "交代研究对象、关键概念与材料来源", "targets": ["evidence", "background"]},
-        {"role": "insight", "responsibility": "解释问题成因以及现有方案失效的关键环节", "targets": ["insight", "problem"]},
-        {"role": "content", "responsibility": "建立后续技术方案需要回答的研究假设", "targets": ["problem", "content"]},
-    ],
-    "method": [
-        {"role": "architecture", "responsibility": "用总体框架串联研究输入、关键模块与输出", "targets": ["architecture"]},
-        {"role": "method", "responsibility": "说明关键数据、知识或材料的构建流程", "targets": ["method", "evidence"]},
-        {"role": "method", "responsibility": "解释核心方法一的输入、处理步骤与输出", "targets": ["method"]},
-        {"role": "method", "responsibility": "解释核心方法二的算法机制与关键实现", "targets": ["method"]},
-        {"role": "architecture", "responsibility": "展示系统架构、模块协作与数据流转", "targets": ["architecture", "method"]},
-        {"role": "evidence", "responsibility": "说明证据如何检索、对齐并支撑最终结论", "targets": ["evidence", "method"]},
-        {"role": "content", "responsibility": "展示关键工程实现、接口与异常处理策略", "targets": ["architecture", "content"]},
-        {"role": "method", "responsibility": "解释提示设计、任务拆解或推理约束", "targets": ["method"]},
-        {"role": "architecture", "responsibility": "说明从离线构建到在线分析的完整运行链路", "targets": ["architecture", "method"]},
-        {"role": "insight", "responsibility": "归纳技术方案中最关键的设计取舍", "targets": ["insight", "method"]},
-    ],
-    "evaluation": [
-        {"role": "data", "responsibility": "交代实验环境、数据集、基线和评价指标", "targets": ["data", "evidence"]},
-        {"role": "data", "responsibility": "呈现第一项核心任务的完整实验结果与含义", "targets": ["data"]},
-        {"role": "data", "responsibility": "呈现第二项核心任务的完整实验结果与含义", "targets": ["data"]},
-        {"role": "comparison", "responsibility": "用基线对比证明方法带来的真实改进", "targets": ["comparison", "data"]},
-        {"role": "insight", "responsibility": "通过消融或误差分析解释结果为何成立", "targets": ["insight", "data"]},
-        {"role": "data", "responsibility": "呈现第三项任务或综合任务的实验结果", "targets": ["data"]},
-        {"role": "evidence", "responsibility": "用案例验证结果的可解释性与可追溯性", "targets": ["evidence", "data"]},
-        {"role": "insight", "responsibility": "评估系统效率、质量、成本与适用边界", "targets": ["insight", "data"]},
-        {"role": "comparison", "responsibility": "综合比较各任务表现并指出主要差异", "targets": ["comparison", "data"]},
-        {"role": "insight", "responsibility": "把实验发现转化为可信的研究结论与局限", "targets": ["insight", "conclusion"]},
-    ],
-}
-
-
-BUSINESS_PLAN_CONTRACT_LIBRARY = [
-    {"role": "background", "responsibility": "项目缘起、公共价值与目标场景", "targets": ["background", "content"], "keywords": ["项目背景", "项目应用前景"], "phase": "opportunity"},
-    {"role": "problem", "responsibility": "目标用户的核心痛点与现有服务断点", "targets": ["problem", "background"], "keywords": ["社会角度", "市场角度", "痛点"], "phase": "opportunity"},
-    {"role": "data", "responsibility": "政策、行业与市场机会的量化依据", "targets": ["data", "background"], "keywords": ["政策角度", "商机分析", "行业分析"], "phase": "opportunity"},
-    {"role": "comparison", "responsibility": "竞品格局、替代方案与未满足需求", "targets": ["comparison", "problem"], "keywords": ["竞争环境", "竞品分析"], "phase": "opportunity"},
-    {"role": "architecture", "responsibility": "项目价值主张与闭环解决方案", "targets": ["architecture", "method"], "keywords": ["项目应用前景", "产品概况", "产品服务"], "phase": "solution"},
-    {"role": "method", "responsibility": "产品服务、核心功能与用户路径", "targets": ["method", "content"], "keywords": ["产品服务", "功能模块"], "phase": "solution"},
-    {"role": "method", "responsibility": "关键技术、AI 能力与知识服务实现", "targets": ["method", "architecture"], "keywords": ["关键技术", "技术实现", "技术优势", "RAG", "推荐"], "phase": "solution"},
-    {"role": "architecture", "responsibility": "多角色协同、业务流程与服务闭环", "targets": ["architecture", "method"], "keywords": ["功能模块", "献血者端", "护士端", "管理员端"], "phase": "solution"},
-    {"role": "architecture", "responsibility": "系统架构、数据层与部署保障", "targets": ["architecture", "method"], "keywords": ["架构设计", "调用关系", "数据层", "部署"], "phase": "solution"},
-    {"role": "comparison", "responsibility": "功能创新、技术壁垒与差异化优势", "targets": ["comparison", "method"], "keywords": ["技术优势", "竞品分析", "创新"], "phase": "solution"},
-    {"role": "method", "responsibility": "市场营销、用户增长与渠道策略", "targets": ["method", "content"], "keywords": ["市场营销策略", "推广", "渠道"], "phase": "execution"},
-    {"role": "evidence", "responsibility": "团队分工、组织机制与执行能力", "targets": ["evidence", "content"], "keywords": ["创业团队", "团队简介", "团队成员", "组织架构", "公司管理"], "phase": "execution"},
-    {"role": "data", "responsibility": "商业模式、收入来源与关键假设", "targets": ["data", "content"], "keywords": ["销售预测", "收入", "增值服务"], "phase": "execution"},
-    {"role": "data", "responsibility": "财务预测、现金流与增长路径", "targets": ["data"], "keywords": ["财务预测", "现金流量", "资产负债"], "phase": "execution"},
-    {"role": "data", "responsibility": "资本结构、资金需求与资金用途", "targets": ["data", "content"], "keywords": ["资本结构", "资金分配", "投资者需求"], "phase": "execution"},
-    {"role": "insight", "responsibility": "主要风险、应对措施与阶段里程碑", "targets": ["insight", "problem", "conclusion"], "keywords": ["风险分析", "风险对冲", "应对措施"], "phase": "execution"},
-]
-
 
 def is_business_plan(sources: list[dict]) -> bool:
     return any(
@@ -135,21 +71,8 @@ def extract_evidence(sources: list[dict]) -> dict:
     return extract_evidence_graph(sources)
 
 
-def classify_role(section: dict) -> str:
-    explicit = str(section.get("semanticRole") or "").strip()
-    if explicit in ROLE_LABELS:
-        return explicit
-    title = section.get("title", "")
-    body = section.get("text", "")[:1000]
-    for role, pattern in ROLE_PATTERNS:
-        if pattern.search(title):
-            return role
-    for role, pattern in ROLE_PATTERNS:
-        if pattern.search(body):
-            return role
-    if re.search(r"\d+(?:\.\d+)?\s*(?:%|倍|ms|秒|分钟|GB|MB)", body):
-        return "data"
-    return "content"
+def classify_role(section: dict, position: int | None = None, total: int | None = None) -> str:
+    return classify_section(section, position, total, set(ROLE_LABELS))["role"]
 
 
 def archetypes(role: str) -> list[str]:
@@ -179,6 +102,7 @@ def _section_records(sources: list[dict]) -> list[dict]:
     for source_index, source in enumerate(sources):
         back_matter = False
         by_title = {}
+        section_total = len(source.get("sections", []))
         for section_index, section in enumerate(source.get("sections", [])):
             if not section.get("text", "").strip():
                 continue
@@ -193,7 +117,8 @@ def _section_records(sources: list[dict]) -> list[dict]:
                 continue
             if re.search(r"https?://|www\.|@", title, re.IGNORECASE) or len(title) > 100 or re.match(r"^\[?\d+\]", title):
                 continue
-            role = classify_role(section)
+            classified = classify_section(section, section_index, section_total, set(ROLE_LABELS))
+            role = classified["role"]
             text = section.get("text", "")
             if title in by_title:
                 previous = by_title[title]
@@ -212,6 +137,8 @@ def _section_records(sources: list[dict]) -> list[dict]:
                 "section": {**section},
                 "refSections": [section],
                 "role": role,
+                "roleConfidence": classified["confidence"],
+                "roleSignal": classified["signal"],
                 "order": (source_index, section_index),
                 "hasMetrics": bool(re.search(r"\d+(?:\.\d+)?\s*(?:%|倍|ms|秒|分钟|GB|MB)|Accuracy|F1|Recall|Precision", text, re.IGNORECASE)),
                 "importance": float(section.get("importance", 0.5)),
@@ -226,7 +153,11 @@ def analyze_materials(sources: list[dict]) -> dict:
     documents = []
     for source in sources:
         sections = source.get("sections", [])
-        counts = Counter(classify_role(section) for section in sections if section.get("text", "").strip())
+        classified = [
+            (section, classify_section(section, index, len(sections), set(ROLE_LABELS)))
+            for index, section in enumerate(sections) if section.get("text", "").strip()
+        ]
+        counts = Counter(item["role"] for _, item in classified)
         role_counts.update(counts)
         suffix = str(source.get("name", "")).lower().rsplit(".", 1)[-1]
         profile = source.get("documentProfile", {})
@@ -238,6 +169,11 @@ def analyze_materials(sources: list[dict]) -> dict:
             "tables": len(source.get("tables", [])),
             "characters": source.get("stats", {}).get("characters", sum(len(item.get("text", "")) for item in sections)),
             "semanticCoverage": dict(counts),
+            "uncertainRoles": [
+                {"section": section.get("id"), "title": str(section.get("title", ""))[:60],
+                 "role": item["role"], "confidence": item["confidence"]}
+                for section, item in classified if item["confidence"] < 0.5
+            ][:8],
             "keyPoints": list(dict.fromkeys(
                 point for section in sections
                 for point in select_key_points(section, maximum=1)
@@ -290,34 +226,8 @@ def build_page_contracts(sources: list[dict], title: str, preset: str, slide_cou
     records = _section_records(sources)
     if is_business_plan(sources):
         return _business_plan_contracts(slide_count)
-    if preset not in {"academic", "conference"}:
-        general = [
-            ("background", "交代受众背景与核心矛盾"), ("problem", "明确要解决的问题与成功标准"),
-            ("insight", "提炼最关键的事实与洞察"), ("architecture", "展示总体方案与工作机制"),
-            ("method", "说明关键举措、流程与责任分工"), ("data", "用数据验证方案价值"),
-            ("comparison", "呈现选择、取舍与风险"), ("conclusion", "形成明确结论与下一步行动"),
-        ]
-        contracts = [{"role": "cover", "responsibility": "封面与核心主张", "targets": ["background"], "phase": "opening"}]
-        if slide_count >= 8:
-            contracts.append({"role": "agenda", "responsibility": "受众阅读路线", "targets": [], "phase": "opening"})
-        body_count = max(0, slide_count - len(contracts) - 1)
-        available = {record["role"] for record in records} - {"conclusion"}
-        relevant = [(role, responsibility) for role, responsibility in general if role in available]
-        if "evidence" in available:
-            relevant.append(("evidence", "用材料中的案例与证据支撑核心判断"))
-        sequence = relevant or general
-        if relevant and body_count > len(sequence):
-            data_count = sum(record["role"] == "data" for record in records)
-            sequence = [*sequence, *[("data", "补充另一组结果，保留其独立来源和统计口径")] * min(data_count - 1, body_count - len(sequence))]
-        if "content" in available:
-            sequence = [*sequence, ("content", "解释材料中的关键内容及其意义")] if relevant else [("content", "解释材料中的关键内容及其意义")]
-        # Short decks must retain results; a fixed prefix used to omit all data pages.
-        if body_count < len(sequence) and any(role == "data" for role, _ in sequence) and not any(role == "data" for role, _ in sequence[:body_count]):
-            data_contract = next(item for item in sequence if item[0] == "data")
-            sequence = sequence[:max(0, body_count - 1)] + [data_contract]
-        contracts.extend({"role": role, "responsibility": responsibility, "targets": [role], "phase": "body"} for role, responsibility in (sequence * ((body_count // len(sequence)) + 1))[:body_count])
-        contracts.append({"role": "conclusion", "responsibility": "结论、行动与下一步", "targets": ["conclusion"], "phase": "closing"})
-        return contracts[:slide_count]
+    if preset not in ACADEMIC_PRESETS:
+        return general_contracts(preset, slide_count, records)
 
     contracts = [{"role": "cover", "responsibility": "封面与研究命题", "targets": ["background", "problem"], "phase": "opening"}]
     if slide_count >= 9:
@@ -343,7 +253,7 @@ def build_page_contracts(sources: list[dict], title: str, preset: str, slide_cou
     return contracts[:slide_count]
 
 
-def _record_score(record: dict, contract: dict, used: Counter) -> float:
+def _record_score(record: dict, contract: dict, used: Counter, relevance: dict | None = None) -> float:
     targets = contract.get("targets", [])
     if record["role"] in targets:
         score = 26 - targets.index(record["role"]) * 9
@@ -408,6 +318,9 @@ def _record_score(record: dict, contract: dict, used: Counter) -> float:
         score += 1
     score += record["importance"] * 3
     score -= used[(record["source"]["name"], record["section"]["id"])] * 32
+    if relevance:
+        # Hybrid (BM25 + dense) relevance of the section to the deck query; a tie-breaker, not an override.
+        score += 6 * max(relevance.get((record["source"]["name"], part["id"]), 0.0) for part in record["refSections"])
     return score
 
 
@@ -432,10 +345,14 @@ def _contract_title(contract: dict) -> str:
     return title[:36]
 
 
-def _select_record(records: list[dict], contract: dict, used: Counter) -> dict | None:
+def _select_record(
+    records: list[dict], contract: dict, used: Counter, relevance: dict | None = None
+) -> dict | None:
     if not records or contract["role"] in {"agenda", "section", "questions"}:
         return None
-    return max(records, key=lambda record: (_record_score(record, contract, used), -record["order"][0], -record["order"][1]))
+    return max(records, key=lambda record: (
+        _record_score(record, contract, used, relevance), -record["order"][0], -record["order"][1]
+    ))
 
 
 def _bullets(section: dict, limit: int = 4, query: str = "") -> list[str]:
@@ -576,7 +493,13 @@ def _expected_figure_kinds(contract: dict) -> list[str]:
 def plan_deck(
     sources: list[dict], title: str, preset: str = "academic", slide_count: int = 12,
     instructions: str = "", brief: dict | None = None,
+    relevance: dict[tuple[str, str], float] | None = None,
 ) -> dict:
+    """Plan a deck deterministically.
+
+    ``relevance`` optionally maps ``(document, section)`` to a 0–1 hybrid retrieval
+    score (see :func:`app.intelligence.retrieval.section_relevance_async`).
+    """
     brief = brief or {}
     business_plan = is_business_plan(sources)
     evidence = extract_evidence_graph(sources)
@@ -597,7 +520,7 @@ def plan_deck(
     used_messages: set[str] = set()
     for position, contract in enumerate(contracts, 1):
         role = contract["role"]
-        record = _select_record(records, contract, used)
+        record = _select_record(records, contract, used, relevance)
         if record and role != "cover":
             used[(record["source"]["name"], record["section"]["id"])] += 1
         section = record["section"] if record else {"id": "S000", "title": title, "text": ""}
@@ -620,11 +543,11 @@ def plan_deck(
             message = str(brief.get("objective") or opening_thesis).strip()
         elif role == "agenda":
             academic = preset in {"academic", "conference"}
-            page_title = "答辩逻辑" if academic else "汇报路线"
+            page_title = "答辩逻辑" if academic else preset_library(preset)["agenda"]["title"]
             bullets = (
                 ["机会与真实痛点", "产品、技术与服务闭环", "市场进入与组织执行", "商业可行性、风险与行动"]
                 if business_plan
-                else section_titles or (["研究问题与目标", "技术方案与系统实现", "实验验证与结论"] if academic else ["问题与目标", "方案与证据", "结论与行动"])
+                else section_titles or (["研究问题与目标", "技术方案与系统实现", "实验验证与结论"] if academic else list(preset_library(preset)["agenda"]["bullets"]))
             )
             message, refs = (
                 "从真实需求出发，验证解决方案能否持续落地"
@@ -639,7 +562,7 @@ def plan_deck(
             page_title = (
                 "项目价值与下一阶段行动"
                 if business_plan
-                else ("研究结论与未来工作" if position == slide_count else "研究结论、贡献与边界") if preset in {"academic", "conference"} else "结论与下一步"
+                else ("研究结论与未来工作" if position == slide_count else "研究结论、贡献与边界") if preset in ACADEMIC_PRESETS else preset_library(preset)["conclusion"]["title"]
             )
             bullets = _bullets(section, 4, contract["responsibility"])
             message = understanding.get("mainPoint") or contract["responsibility"]

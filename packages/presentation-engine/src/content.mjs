@@ -1,4 +1,5 @@
 import {metricDataset,namedMetricTable,metricTokens,transitionDataset} from './data.mjs'
+import {chartModel} from './charts.mjs'
 
 // Shared by HTML and native PowerPoint. Capacity is a content contract, not a slice.
 const capacity={cover:3,section:0,questions:3,agenda:4,background:4,problem:3,
@@ -23,11 +24,12 @@ export function resolveComposition(spec,variant){
  const items=spec.content?.bullets??[],hasAsset=(spec.assetBindings??[]).some(asset=>asset.path||asset.dataUri)
  if(variant==='evidence-brief')return hasAsset||items.length>4||items.some(item=>cleanText(item).length>110)||editorialContent(spec).lead.length>70?'content-list':variant
  const chart=!['cover','section','questions'].includes(spec.role)&&(['chart-focus','comparison-bars','table-highlight','ablation'].includes(variant)||spec.visualIntent?.primaryVisual==='chart'||(['data','comparison'].includes(spec.role)&&!['split','cards','two-column','metric-wall','scorecard'].includes(variant)))
- const data=chart&&(transitionDataset(items)||metricDataset(items)||namedMetricTable(items))
+ const model=chart?chartModel(spec,items):null
+ const data=chart&&(transitionDataset(items)||metricDataset(items)||namedMetricTable(items)||model)
  const table=variant==='table-highlight'&&namedMetricTable(items)
  if(table&&!tableFits(table))return 'content-list'
  if(chart&&!data&&!hasAsset&&!['metric-wall','scorecard'].includes(variant))return 'content-list'
- const limit=hasAsset?(spec.role==='cover'?2:4):['cover','section','questions'].includes(spec.role)?capacity[spec.role]:data?5:variantCapacity[variant]??capacity[spec.role]??4
+ const limit=hasAsset?(spec.role==='cover'?2:4):['cover','section','questions'].includes(spec.role)?capacity[spec.role]:data?(model?8:5):variantCapacity[variant]??capacity[spec.role]??4
  if(items.length>limit||items.some(item=>cleanText(item).length>110))return 'content-list'
  if(['metric-wall','scorecard'].includes(variant)&&items.some(item=>!metricTokens(item).length))return 'content-list'
  return variant

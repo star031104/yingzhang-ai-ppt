@@ -1,0 +1,11 @@
+{
+  "id": "academic-defense",
+  "version": "1.0.0",
+  "kind": "visual",
+  "name": "学术答辩 · 严谨论证",
+  "description": "靛蓝与金色建立学术秩序，标题短横线与角标强调论证结构，适合毕业答辩、开题报告与学术会议。",
+  "entrypoint": "SKILL.md",
+  "permissions": {
+    "executeScripts": false
+  }
+}

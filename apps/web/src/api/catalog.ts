@@ -97,3 +97,5 @@ export async function removeSkill(id: string) {
   });
   if (!response.ok) throw new Error(await response.text());
 }
+export const getModelRouting = () =>
+  json<{ role: string; model_config_id: string }[]>("/model-routing");

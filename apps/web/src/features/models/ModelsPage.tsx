@@ -13,6 +13,7 @@ import {
 import type { ModelConfig } from "../../api";
 import { Empty } from "../../components/Empty";
 import { Notice } from "../../components/Notice";
+import { RoleRoutingPanel } from "./RoleRoutingPanel";
 
 export function ModelsPage({
   providers,
@@ -249,6 +250,7 @@ export function ModelsPage({
           )}
         </div>
       </div>
+      <RoleRoutingPanel providers={providers} models={models} refresh={refresh} />
       <div className="saved-list">
         <div className="section-heading compact">
           <div>

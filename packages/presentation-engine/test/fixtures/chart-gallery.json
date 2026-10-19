@@ -1,0 +1,312 @@
+[
+ {
+  "id": "chart-1",
+  "position": 1,
+  "role": "data",
+  "message": "方案乙在准确率与召回率上均领先",
+  "content": {
+   "title": "两项指标共同领先",
+   "bullets": [
+    "方案甲：准确率89%，召回率82%",
+    "方案乙：准确率93%，召回率87%"
+   ]
+  },
+  "sourceRefs": [
+   {
+    "document": "合成图表样例.xlsx",
+    "section": "S001",
+    "page": 1
+   }
+  ],
+  "visualIntent": {
+   "primaryVisual": "chart",
+   "selectedVariant": "chart-focus",
+   "archetypeCandidates": [
+    "chart-focus"
+   ]
+  },
+  "designSystem": {
+   "palette": {},
+   "typography": {
+    "fontFamily": "Microsoft YaHei"
+   }
+  }
+ },
+ {
+  "id": "chart-2",
+  "position": 2,
+  "role": "data",
+  "message": "华东与华南续约率领先全国均值",
+  "content": {
+   "title": "重点区域续约表现",
+   "bullets": [
+    "华东区域重点客户续约：续约率：92%",
+    "华南区域重点客户续约：续约率：88%",
+    "华北区域重点客户续约：续约率：81%",
+    "西南区域重点客户续约：续约率：77%",
+    "西北区域重点客户续约：续约率：69%",
+    "东北区域重点客户续约：续约率：64%"
+   ]
+  },
+  "sourceRefs": [
+   {
+    "document": "合成图表样例.xlsx",
+    "section": "S002",
+    "page": 1
+   }
+  ],
+  "visualIntent": {
+   "primaryVisual": "chart",
+   "selectedVariant": "chart-focus",
+   "archetypeCandidates": [
+    "chart-focus"
+   ]
+  },
+  "designSystem": {
+   "palette": {},
+   "typography": {
+    "fontFamily": "Microsoft YaHei"
+   }
+  }
+ },
+ {
+  "id": "chart-3",
+  "position": 3,
+  "role": "data",
+  "message": "线上渠道增速更快",
+  "content": {
+   "title": "渠道订单规模持续增长",
+   "bullets": [
+    "线上渠道：2021年：12；2022年：18；2023年：25；2024年：31",
+    "线下渠道：2021年：20；2022年：22；2023年：23；2024年：24"
+   ]
+  },
+  "sourceRefs": [
+   {
+    "document": "合成图表样例.xlsx",
+    "section": "S003",
+    "page": 1
+   }
+  ],
+  "visualIntent": {
+   "primaryVisual": "chart",
+   "selectedVariant": "chart-focus",
+   "archetypeCandidates": [
+    "chart-focus"
+   ]
+  },
+  "designSystem": {
+   "palette": {},
+   "typography": {
+    "fontFamily": "Microsoft YaHei"
+   }
+  }
+ },
+ {
+  "id": "chart-4",
+  "position": 4,
+  "role": "data",
+  "message": "累计用户逐年扩大",
+  "content": {
+   "title": "累计用户规模",
+   "bullets": [
+    "累计用户：2021年：120；2022年：180；2023年：260；2024年：330"
+   ]
+  },
+  "sourceRefs": [
+   {
+    "document": "合成图表样例.xlsx",
+    "section": "S004",
+    "page": 1
+   }
+  ],
+  "visualIntent": {
+   "primaryVisual": "chart",
+   "selectedVariant": "chart-focus",
+   "archetypeCandidates": [
+    "chart-focus"
+   ]
+  },
+  "chartType": "area",
+  "designSystem": {
+   "palette": {},
+   "typography": {
+    "fontFamily": "Microsoft YaHei"
+   }
+  }
+ },
+ {
+  "id": "chart-5",
+  "position": 5,
+  "role": "data",
+  "message": "移动端贡献主要访问",
+  "content": {
+   "title": "访问设备构成",
+   "bullets": [
+    "移动端：访问占比：68%",
+    "桌面端：访问占比：27%",
+    "平板：访问占比：5%"
+   ]
+  },
+  "sourceRefs": [
+   {
+    "document": "合成图表样例.xlsx",
+    "section": "S005",
+    "page": 1
+   }
+  ],
+  "visualIntent": {
+   "primaryVisual": "chart",
+   "selectedVariant": "chart-focus",
+   "archetypeCandidates": [
+    "chart-focus"
+   ]
+  },
+  "designSystem": {
+   "palette": {},
+   "typography": {
+    "fontFamily": "Microsoft YaHei"
+   }
+  }
+ },
+ {
+  "id": "chart-6",
+  "position": 6,
+  "role": "data",
+  "message": "成本更高的渠道并不必然转化更好",
+  "content": {
+   "title": "获客成本与转化率",
+   "bullets": [
+    "搜索广告：获客成本：120元；转化率：12%",
+    "社交媒体：获客成本：80元；转化率：8%",
+    "合作伙伴：获客成本：150元；转化率：16%",
+    "内容营销：获客成本：60元；转化率：9%",
+    "线下活动：获客成本：200元；转化率：14%"
+   ]
+  },
+  "sourceRefs": [
+   {
+    "document": "合成图表样例.xlsx",
+    "section": "S006",
+    "page": 1
+   }
+  ],
+  "visualIntent": {
+   "primaryVisual": "chart",
+   "selectedVariant": "chart-focus",
+   "archetypeCandidates": [
+    "chart-focus"
+   ]
+  },
+  "designSystem": {
+   "palette": {},
+   "typography": {
+    "fontFamily": "Microsoft YaHei"
+   }
+  }
+ },
+ {
+  "id": "chart-7",
+  "position": 7,
+  "role": "data",
+  "message": "收入增长同时增速放缓",
+  "content": {
+   "title": "收入与增长率",
+   "bullets": [
+    "2021年：收入：120万元；增长率：35%",
+    "2022年：收入：150万元；增长率：25%",
+    "2023年：收入：180万元；增长率：20%",
+    "2024年：收入：204万元；增长率：13%"
+   ]
+  },
+  "sourceRefs": [
+   {
+    "document": "合成图表样例.xlsx",
+    "section": "S007",
+    "page": 1
+   }
+  ],
+  "visualIntent": {
+   "primaryVisual": "chart",
+   "selectedVariant": "chart-focus",
+   "archetypeCandidates": [
+    "chart-focus"
+   ]
+  },
+  "designSystem": {
+   "palette": {},
+   "typography": {
+    "fontFamily": "Microsoft YaHei"
+   }
+  }
+ },
+ {
+  "id": "chart-8",
+  "position": 8,
+  "role": "data",
+  "message": "新增签约抵消客户流失",
+  "content": {
+   "title": "年度余额变动",
+   "bullets": [
+    "期初余额：金额：100万元",
+    "新增签约：金额：35万元",
+    "客户流失：金额：-12万元",
+    "价格调整：金额：8万元",
+    "期末余额：金额：131万元"
+   ]
+  },
+  "sourceRefs": [
+   {
+    "document": "合成图表样例.xlsx",
+    "section": "S008",
+    "page": 1
+   }
+  ],
+  "visualIntent": {
+   "primaryVisual": "chart",
+   "selectedVariant": "chart-focus",
+   "archetypeCandidates": [
+    "chart-focus"
+   ]
+  },
+  "designSystem": {
+   "palette": {},
+   "typography": {
+    "fontFamily": "Microsoft YaHei"
+   }
+  }
+ },
+ {
+  "id": "chart-9",
+  "position": 9,
+  "role": "data",
+  "message": "两项指标均明显提升",
+  "content": {
+   "title": "改造前后关键指标",
+   "bullets": [
+    "事实准确率从81.4%提升至98.7%",
+    "内容覆盖率从76.2%提升至92.5%"
+   ]
+  },
+  "sourceRefs": [
+   {
+    "document": "合成图表样例.xlsx",
+    "section": "S009",
+    "page": 1
+   }
+  ],
+  "visualIntent": {
+   "primaryVisual": "chart",
+   "selectedVariant": "chart-focus",
+   "archetypeCandidates": [
+    "chart-focus"
+   ]
+  },
+  "designSystem": {
+   "palette": {},
+   "typography": {
+    "fontFamily": "Microsoft YaHei"
+   }
+  }
+ }
+]

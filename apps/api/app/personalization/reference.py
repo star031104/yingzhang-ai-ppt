@@ -131,9 +131,12 @@ def extract_reference(data):
     inherited = layout_tokens(data)
     style["layouts"] = inherited["layouts"]
     value = validate_preference("reference_style", json.dumps(style))
+    from app.templates.layout_library import reference_layout_library
     return value, {
         "slideCount": len(deck.slides),
         "inheritance": inherited,
+        # Text-free per-slide layout signatures, reused when planning later decks.
+        "layoutLibrary": reference_layout_library(data),
         "supportedFont": font,
         "themeRead": theme is not None,
         "retainedOriginal": False,

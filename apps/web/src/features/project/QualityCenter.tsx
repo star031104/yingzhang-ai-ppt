@@ -1,4 +1,8 @@
+import type { CSSProperties } from "react";
 import type { QualityReport } from "../../api";
+import { EvaluationPanel } from "./EvaluationPanel";
+
+const VISION_STATUS: Record<string, string> = { "not-configured": "未配置视觉模型", unavailable: "视觉模型不可用", checked: "视觉模型已复核" };
 
 const DIMENSION_LABELS: Record<string, string> = {
   fundamentals: "演示基础",
@@ -8,15 +12,22 @@ const DIMENSION_LABELS: Record<string, string> = {
   fidelity: "材料忠实",
 };
 
-export function QualityCenter({ report }: { report: QualityReport }) {
+export function QualityCenter({ report, projectId, slides, onJumpToSlide }: {
+  report: QualityReport;
+  projectId?: string;
+  slides?: { id: string; position: number }[];
+  onJumpToSlide?: (slideId: string, position: number) => void;
+}) {
   if (!report.professionalAudit) return null;
   const audit = report.professionalAudit;
   const ready = audit.ready && report.passed && report.visualQA?.complete !== false;
   return (
     <div className="quality-center">
       <div className="quality-heading">
-        <div><b>专业质量门禁</b><small>对齐内容、设计、完整性、正确性与忠实度</small></div>
-        <strong>{audit.overall}<i>{audit.grade}</i></strong>
+        <strong className={`score-ring ${ready ? "is-ready" : "is-pending"}`} style={{ "--score": Math.max(0, Math.min(100, audit.overall)) } as CSSProperties}>
+          <span>{audit.overall}<i>{audit.grade}</i></span>
+        </strong>
+        <div><b>专业质量门禁</b><small>内容、设计、完整性、正确性与材料忠实度</small></div>
       </div>
       {report.visualQA && (
         <div className="quality-evidence">
@@ -34,7 +45,7 @@ export function QualityCenter({ report }: { report: QualityReport }) {
         {Object.entries(audit.dimensions).map(([key, value]) => (
           <div key={key}>
             <span>{DIMENSION_LABELS[key] || key}</span>
-            <i><b style={{ width: `${Math.max(0, Math.min(100, value))}%` }}></b></i>
+            <i className={value >= 85 ? "good" : value >= 70 ? "watch" : "risk"}><b style={{ width: `${Math.max(0, Math.min(100, value))}%` }}></b></i>
             <em>{value}</em>
           </div>
         ))}
@@ -50,7 +61,7 @@ export function QualityCenter({ report }: { report: QualityReport }) {
           {report.visualReflection && (
             <span>
               <b>视觉反思已检查 {report.visualReflection.checked || 0} 页</b>
-              安全修复 {report.visualReflection.applied || 0} 页{report.visualReflection.visionStatus ? ` · ${report.visualReflection.visionStatus}` : ""}
+              安全修复 {report.visualReflection.applied || 0} 页{report.visualReflection.visionStatus ? ` · ${VISION_STATUS[report.visualReflection.visionStatus] || report.visualReflection.visionStatus}` : ""}
             </span>
           )}
           {report.visualMaturity && (
@@ -70,6 +81,7 @@ export function QualityCenter({ report }: { report: QualityReport }) {
       {audit.recommendations[0] ? (
         <p className="quality-next"><b>优先优化：</b>{audit.recommendations[0].title} · {audit.recommendations[0].detail}</p>
       ) : <p className={`quality-next${ready ? " pass" : ""}`}>{ready ? "已通过当前自动检查，交付前请预览完整演示" : "检查尚未全部通过，请完成页面生成并处理待修复问题"}</p>}
+      {projectId && <EvaluationPanel projectId={projectId} slides={slides} onJumpToSlide={onJumpToSlide} />}
     </div>
   );
 }

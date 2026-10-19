@@ -63,7 +63,7 @@ async def render_comparison(project_id: str, comparison_id: str, db=Depends(get_
                 current = json.loads((root / label / "slides" / str(slide["position"]) / "current.json").read_text(encoding="utf-8"))
                 slide.setdefault("visualIntent", {})["selectedVariant"] = current["variant"]
                 slide["designSystem"] = current.get("designSystem", slide.get("designSystem", {}))
-            await asyncio.to_thread(presentation_engine.run, "pptx", slides, root / label / "presentation.pptx")
+            await asyncio.to_thread(presentation_engine.run, "pptx", slides, root / label / "presentation.pptx", scene_root=root / label)
         with lock:
             assert_current()
             row.status = "rendered"
@@ -178,6 +178,9 @@ async def desktop_verify(project_id: str, body: DesktopRequest, db=Depends(get_d
                 problems.append(f"第 {spec['position']} 页标题或正文未完整读取，请核对替代字体、图表呈现或截断")
         if problems:
             result["status"] = "needs-repair"
+        from app.validation.visual_regression import office_page_fidelity
+        result["crossFormatFidelity"] = office_page_fidelity(
+            Path(project.artifact_path) / "slides" / "rendered", slides, [output / page["image"] for page in pages])
     result["problems"] = problems
     result["pages"] = [{key: value for key, value in page.items() if key != "text"} for page in pages]
     row.report = result

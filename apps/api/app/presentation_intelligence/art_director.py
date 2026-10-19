@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from app.presentation_intelligence.brand_kit import compile_brand_kit
+from app.presentation_intelligence.visual_grammar import normalize_visual_grammar
 
 PALETTES = {
     "academic": {"name": "靛青证据", "bg": "#F6F7FB", "ink": "#182033", "primary": "#625BF6", "accent": "#78E3C5", "deep": "#20284D", "line": "#E3E7F0"},
@@ -122,5 +123,40 @@ def build_design_system(preset: str, skills: list, brief: dict | None = None) ->
             if skill.manifest.get("communitySource")
         ],
     }
+    _apply_grammar(design_system, skill_tokens)
     design_system["brandKit"] = compile_brand_kit(design_system)
     return design_system
+
+
+def _apply_grammar(design_system: dict, skill_tokens: dict) -> None:
+    """Pass a skill's layout grammar through; legacy tokens leave defaults untouched."""
+    grammar, errors = normalize_visual_grammar(skill_tokens)
+    if errors:
+        design_system["grammarWarnings"] = errors
+    if not grammar:
+        return
+    design_system["grammar"] = grammar
+    if grid := grammar.get("grid"):
+        design_system["grid"] = {
+            "canvas": [1280, 720], "columns": grid["columns"], "margin": grid["margin"]["x"],
+            "marginTop": grid["margin"]["top"], "marginBottom": grid["margin"]["bottom"], "gutter": grid["gutter"],
+        }
+    if scale := grammar.get("typeScale"):
+        typography = design_system["typography"]
+        typography["display"] = {"size": scale["display"], "weight": 800, "lineHeight": 1.12}
+        typography["title"] = {**typography["title"], "size": scale["title"]}
+        typography["subtitle"] = {"size": scale["subtitle"], "weight": 500, "lineHeight": 1.5}
+        typography["body"] = {**typography["body"], "size": scale["body"]}
+        typography["caption"] = {**typography["caption"], "size": scale["caption"]}
+    if title := grammar.get("titleStyle"):
+        design_system["typography"]["title"]["weight"] = title["weight"]
+    if density := grammar.get("density"):
+        design_system["densityBias"] = density
+    if chart := grammar.get("chartStyle"):
+        palette = design_system["palette"]
+        named = {**palette, "muted": "#68758B"}
+        design_system["chart"] = {
+            "series": [named.get(key, key) for key in chart["palette"]],
+            "showGrid": chart["gridlines"] != "none", "gridlines": chart["gridlines"],
+            "dataLabels": chart["dataLabels"],
+        }

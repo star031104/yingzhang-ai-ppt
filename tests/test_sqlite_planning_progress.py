@@ -8,7 +8,7 @@ from app.jobs.progress import friendly_job_error
 def test_sqlite_connections_wait_for_brief_writes_without_holding_model_calls():
     with engine.connect() as db:
         assert db.exec_driver_sql("PRAGMA journal_mode").scalar().lower() == "wal"
-        assert db.exec_driver_sql("PRAGMA busy_timeout").scalar() == 30000
+        assert db.exec_driver_sql("PRAGMA busy_timeout").scalar() == 15000
 
 
 def test_database_lock_error_is_actionable_without_exposing_sql():

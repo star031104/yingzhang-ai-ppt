@@ -3,15 +3,18 @@ import io
 import shutil
 import zipfile
 from pathlib import Path
-from xml.etree import ElementTree as ET
+
+from lxml import etree as ET
 
 P = "http://schemas.openxmlformats.org/presentationml/2006/main"
 A = "http://schemas.openxmlformats.org/drawingml/2006/main"
 R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 PR = "http://schemas.openxmlformats.org/package/2006/relationships"
+MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 NS = {"p": P, "a": A, "r": R}
-for prefix, uri in NS.items():
-    ET.register_namespace(prefix, uri)
+# lxml keeps each part's own namespace prefixes. The stdlib ElementTree renamed
+# them (p14 -> ns2), breaking prefix-valued attributes such as mc:Ignorable and
+# mc:Choice/@Requires, which makes PowerPoint ask to repair the file.
 
 
 def _sha(data: bytes) -> str:
@@ -170,9 +173,14 @@ def _transition(root: ET.Element, kind: str, speed: str) -> None:
     existing = root.find("p:transition", NS)
     if existing is not None:
         root.remove(existing)
+    # PowerPoint 2010+ wraps richer transitions in mc:AlternateContent; a slide
+    # may carry only one transition, so drop the wrapped one as well.
+    for wrapper in root.findall(f"{{{MC}}}AlternateContent"):
+        if wrapper.find(f".//{{{P}}}transition") is not None:
+            root.remove(wrapper)
     if kind == "none":
         return
-    element = ET.Element(f"{{{P}}}transition", {"spd": speed, "advClick": "1"})
+    element = ET.Element(f"{{{P}}}transition", {"spd": speed, "advClick": "1"}, nsmap={"p": P})
     ET.SubElement(element, f"{{{P}}}{kind if kind in {'fade', 'push', 'wipe'} else 'fade'}")
     children = list(root)
     insert_at = next((index for index, child in enumerate(children) if child.tag in {f"{{{P}}}timing", f"{{{P}}}extLst"}), len(children))
@@ -183,7 +191,7 @@ def _simple_fade_animation(root: ET.Element, shape_id: str) -> None:
     existing = root.find("p:timing", NS)
     if existing is not None:
         root.remove(existing)
-    timing = ET.Element(f"{{{P}}}timing")
+    timing = ET.Element(f"{{{P}}}timing", nsmap={"p": P})
     tn_list = ET.SubElement(timing, f"{{{P}}}tnLst")
     par1 = ET.SubElement(tn_list, f"{{{P}}}par")
     root_tn = ET.SubElement(par1, f"{{{P}}}cTn", {"id": "1", "dur": "indefinite", "restart": "never", "nodeType": "tmRoot"})

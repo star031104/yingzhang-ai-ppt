@@ -146,6 +146,9 @@ def _variant_score(
         "cards",
     }:
         score -= 46
+    if variant == (slide.get("referenceLayout") or {}).get("variantHint"):
+        # A matched reference slide is the user's own precedent for this kind of page.
+        score += 18
     if previous_silhouette == silhouette:
         score -= 28
     score -= used[silhouette] * 5
@@ -213,6 +216,9 @@ def plan_deck_layouts(
         ]
         if payload["metricCount"] and slide.get("role") in {"content", "insight"}:
             candidates.insert(0, "metric-wall")
+        reference_layout = slide.get("referenceLayout") or {}
+        if reference_layout.get("variantHint"):
+            candidates.insert(0, str(reference_layout["variantHint"]))
         if visual.get("contentRelation") == "explanation" and slide.get("role") not in {"cover", "agenda", "section", "questions", "data", "comparison"} and not payload["hasImage"]:
             candidates.insert(0, "evidence-brief")
         if payload["itemCount"] <= 1:
@@ -273,6 +279,15 @@ def plan_deck_layouts(
             if slide.get("role") in {"conclusion", "questions"}
             else "advance",
         }
+        if reference_layout:
+            reference_grammar_margins = (reference_layout.get("constraintGrammar") or {}).get("safeMargins")
+            if reference_grammar_margins and not layout_plan["constraints"]["referenceSafeMargins"]:
+                layout_plan["constraints"]["referenceSafeMargins"] = reference_grammar_margins
+            layout_plan["referenceLayout"] = {
+                key: reference_layout.get(key)
+                for key in ("layout", "layoutIndex", "slidePosition", "function", "variantHint", "regions", "score")
+            }
+            layout_plan["referenceLayout"]["followed"] = recommended == reference_layout.get("variantHint")
         visual["archetypeCandidates"] = ranked[:5]
         visual["plannedFamily"] = family
         slide["visualIntent"] = visual

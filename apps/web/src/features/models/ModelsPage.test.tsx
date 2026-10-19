@@ -3,7 +3,7 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/re
 import { afterEach, expect, test, vi } from 'vitest';
 import { ModelsPage } from './ModelsPage';
 import * as api from '../../api';
-vi.mock('../../api', () => ({ discoverModels: vi.fn(), probeTextModel: vi.fn(), createProvider: vi.fn(), registerModel: vi.fn(), mapModelRole: vi.fn(), removeProvider: vi.fn(), testProvider: vi.fn(), testImageModel: vi.fn() }));
+vi.mock('../../api', () => ({ discoverModels: vi.fn(), probeTextModel: vi.fn(), createProvider: vi.fn(), registerModel: vi.fn(), mapModelRole: vi.fn(), removeProvider: vi.fn(), testProvider: vi.fn(), testImageModel: vi.fn(), getModelRouting: vi.fn(() => Promise.resolve([])) }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 test('pending image task can be queried again without showing a broken image', async () => {

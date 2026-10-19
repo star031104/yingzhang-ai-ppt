@@ -3,10 +3,9 @@ import hashlib
 import json
 import zipfile
 from difflib import SequenceMatcher
-from xml.etree import ElementTree as ET
 
 from app.personalization.private_files import validate_pptx
-from app.powerpoint.roundtrip import NS, _objects, _read_parts, _slide_paths
+from app.powerpoint.roundtrip import ET, NS, _objects, _read_parts, _slide_paths
 
 MARKER = "yingzhang:v1:"
 

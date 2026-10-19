@@ -32,3 +32,6 @@ skills/installed/
 skills/generated/
 .runtime-*.log
 output/
+
+# Local architecture-analysis cache
+.archify/

@@ -18,8 +18,9 @@ export async function json<T>(url: string, init?: RequestInit): Promise<T> {
       throw new Error(`公网服务暂时不可用（${response.status}），请稍后重试。`);
     }
     try {
-      const parsed = JSON.parse(message) as { detail?: string };
-      throw new Error(parsed.detail || `请求失败（${response.status}）`);
+      const parsed = JSON.parse(message) as { detail?: string | { message?: string } };
+      const detail = typeof parsed.detail === "object" && parsed.detail ? parsed.detail.message : parsed.detail;
+      throw new Error(detail || `请求失败（${response.status}）`);
     } catch (error) {
       if (error instanceof Error && error.message !== "Unexpected end of JSON input") {
         if (!error.message.startsWith("Unexpected token")) throw error;

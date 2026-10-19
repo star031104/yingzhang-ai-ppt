@@ -1,5 +1,214 @@
-.personal-page{display:grid;gap:22px}.personal-grid{display:grid;grid-template-columns:minmax(240px,.7fr) minmax(420px,1.3fr);gap:22px}.personal-page .panel{padding:26px}.personal-page h3{margin-top:0}.personal-page label{display:grid;gap:8px;margin:14px 0}.personal-page input,.personal-page select{max-width:100%;min-width:0}.personal-policy{padding:18px 22px;background:#edf2fb;border:1px solid #dbe4f2;border-radius:14px;display:grid;gap:7px;line-height:1.7;color:#34445f}.personal-policy span,.personal-page .field-help{font-size:13px;line-height:1.7}.personal-profiles{display:grid;gap:8px}.personal-profiles button{text-align:left;padding:12px;display:grid;gap:5px}.personal-profiles button.selected{border-color:#625bf6;background:#f0eeff}.personal-switches{display:flex;gap:18px;flex-wrap:wrap}.personal-switches label{display:flex;align-items:center}.personal-switches input{width:auto}.personal-teach{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:end}.personal-teach button{grid-column:1/-1}.personal-memories article,.personal-feedback{display:flex;justify-content:space-between;gap:16px;padding:18px 0;border-top:1px solid #e4e7ed;align-items:center}.personal-memories p{margin:7px 0}.personal-memories small,.personal-feedback small{color:#667085}.personal-actions{display:flex;gap:10px;flex-wrap:wrap}.personal-import{border:1px dashed #ccd3e3;padding:14px;border-radius:10px;font-size:14px}.personal-reset-preview{margin-top:18px;padding:22px;background:#fff5ef;border:1px solid #f0cdbd;border-radius:12px}.personal-reset-preview button{margin:6px 12px 0 0}.personal-reset-preview p{line-height:1.7}.personal-reset .danger-link{color:#a4382d}.personal-feedback button{white-space:nowrap}@media(max-width:1000px){.personal-grid{grid-template-columns:1fr}.personal-teach{grid-template-columns:1fr}.personal-feedback{flex-wrap:wrap}}
-
-.personal-page button:not(.primary){font:inherit;border:1px solid #d6dceb;border-radius:9px;padding:9px 13px;background:#fff;color:#34445f;cursor:pointer}.personal-page button:disabled{opacity:.55;cursor:wait}.personal-page .personal-profiles button.selected{border-color:#625bf6;background:#f0eeff}.personal-page .personal-switches label{display:inline-flex;flex-direction:row;gap:8px}.personal-page .personal-switches input{flex:none;min-height:0;margin:0;width:16px;height:16px;accent-color:#625bf6}.personal-page details{margin-top:16px;line-height:1.7}.personal-page summary{cursor:pointer}.personal-page .personal-reset .danger-link{color:#a4382d;border-color:#efd3ce}
-
-.personal-case{border-top:1px solid #e2e6ef;padding:18px 0}.personal-case button{margin:4px 8px 4px 0}.reference-thumbnails{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin:16px 0}.reference-thumbnails img{width:100%;border:1px solid #d6dceb;border-radius:8px}.personal-learning{padding:22px}.personal-learning summary{cursor:pointer;font-weight:700}.personal-score-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px}.personal-page .personal-consent{display:flex;align-items:center;gap:8px}.personal-page .personal-consent input{width:16px;height:16px;min-height:0;flex:none}.personal-learning button{font:inherit;border:1px solid #d6dceb;border-radius:8px;padding:8px 12px;background:#fff;cursor:pointer}.personal-learning label{display:grid;gap:8px;margin:12px 0}
+/* 我的助手 */
+.personal-page {
+  display: grid;
+  gap: var(--space-4);
+}
+.personal-page .section-heading {
+  margin-bottom: var(--space-2);
+}
+.personal-policy {
+  display: grid;
+  gap: 4px;
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-lg);
+  background: var(--accent-soft);
+}
+.personal-policy b {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+.personal-policy span {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+.personal-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.75fr) minmax(0, 1.25fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+.personal-page .panel {
+  padding: var(--space-6);
+}
+.personal-page .panel > form,
+.personal-page .panel > label,
+.personal-experience form {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+.personal-page .panel > form > button,
+.personal-experience form > button {
+  justify-self: start;
+}
+.personal-profiles {
+  display: grid;
+  gap: 6px;
+  margin-top: var(--space-4);
+}
+.personal-profiles button {
+  display: grid;
+  justify-content: stretch;
+  gap: 2px;
+  min-height: 0;
+  padding: var(--space-3);
+  border-color: var(--border-default);
+  box-shadow: none;
+  text-align: left;
+  white-space: normal;
+}
+.personal-profiles button b {
+  font-weight: var(--weight-semibold);
+}
+.personal-profiles button small {
+  color: var(--text-tertiary);
+  font-weight: var(--weight-regular);
+}
+.personal-profiles button.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.personal-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin: var(--space-3) 0;
+}
+.personal-switches label,
+.personal-consent {
+  display: inline-flex !important;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-primary);
+  font-weight: var(--weight-regular);
+  cursor: pointer;
+}
+.personal-teach {
+  grid-template-columns: 1fr 1fr;
+  align-items: end;
+}
+.personal-teach button {
+  grid-column: 1 / -1;
+}
+.personal-memories {
+  margin-top: var(--space-4);
+}
+.personal-memories article,
+.personal-feedback {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.personal-memories article > div:first-child,
+.personal-feedback > div {
+  display: grid;
+  gap: 2px;
+}
+.personal-memories p,
+.personal-feedback p {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.personal-memories small,
+.personal-feedback small {
+  color: var(--text-tertiary);
+}
+.personal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.personal-import {
+  padding: var(--space-3);
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+.personal-case {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.personal-case > button {
+  justify-self: start;
+}
+.personal-case p {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.reference-thumbnails {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-2);
+}
+.reference-thumbnails img {
+  width: 100%;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 1px var(--border-default);
+}
+.personal-score-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--space-2);
+}
+.personal-reset-preview {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+}
+.personal-reset-preview p {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.personal-reset-preview button {
+  justify-self: start;
+}
+.personal-page details {
+  margin-top: var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.personal-page details summary {
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.personal-learning {
+  /* details.panel inside the project workspace */
+}
+.personal-learning > summary {
+  font-weight: var(--weight-semibold);
+}
+.personal-learning h3 {
+  margin-top: var(--space-5);
+  font-size: var(--text-md);
+}
+.personal-learning > p,
+.personal-learning > label {
+  margin-top: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.personal-learning > button {
+  margin-top: var(--space-2);
+}
+@media (max-width: 1000px) {
+  .personal-grid,
+  .personal-teach {
+    grid-template-columns: 1fr;
+  }
+  .personal-memories article,
+  .personal-feedback {
+    flex-wrap: wrap;
+  }
+}

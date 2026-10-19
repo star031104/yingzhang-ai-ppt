@@ -1,0 +1,357 @@
+/* 模型配置 & 技能库 */
+.steps {
+  display: flex;
+  gap: var(--space-1);
+  padding: 3px;
+  border-radius: var(--radius-full);
+  background: var(--bg-muted);
+}
+.steps span {
+  padding: 3px 12px;
+  border-radius: var(--radius-full);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+.steps span.on {
+  background: var(--bg-surface-raised);
+  color: var(--accent-text);
+  box-shadow: var(--shadow-xs);
+}
+.model-kind-tabs {
+  display: inline-flex;
+  gap: 2px;
+  margin-bottom: var(--space-4);
+  padding: 3px;
+  border-radius: var(--radius-md);
+  background: var(--bg-muted);
+}
+.model-kind-tabs button {
+  min-height: 30px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-secondary);
+}
+.model-kind-tabs button:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text-primary);
+}
+.model-kind-tabs button.active {
+  background: var(--bg-surface-raised);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+.model-layout,
+.skills-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+.skills-layout {
+  grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.2fr);
+}
+.skills-layout.readonly {
+  grid-template-columns: minmax(0, 1fr);
+}
+.model-form,
+.model-select,
+.skill-install {
+  display: grid;
+  gap: var(--space-4);
+}
+.model-form > .panel-title,
+.model-select > .panel-title,
+.skill-install > .panel-title,
+.skill-list > .panel-title {
+  margin-bottom: 0;
+}
+.model-form > button,
+.model-select > button,
+.skill-install > button {
+  justify-self: start;
+}
+.model-select label small {
+  color: var(--text-tertiary);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-normal);
+}
+.role-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.role-list span,
+.service-tags span,
+.skill-tags span,
+.security-row span {
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  background: var(--bg-muted);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+.saved-list {
+  margin-top: var(--space-7);
+}
+.saved-list > .muted {
+  padding: var(--space-6);
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+.saved-list > article {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+}
+.saved-list > article:first-of-type {
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+.saved-list > article:last-of-type {
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+.saved-list > article:only-of-type {
+  border-radius: var(--radius-lg);
+}
+.saved-list > article + article {
+  border-top: 0;
+}
+.provider-icon,
+.skill-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+.saved-list > article > div:nth-child(2) {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.saved-list small {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.saved-list > article > span {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+.service-tags,
+.skill-tags,
+.security-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.service-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+.image-model-preview {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+}
+.image-model-preview > div {
+  display: grid;
+}
+.image-model-preview small {
+  color: var(--text-tertiary);
+}
+.image-model-preview img {
+  max-width: 420px;
+  border-radius: var(--radius-md);
+}
+
+/* Skills */
+.skill-safety-note {
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+.skill-safety-note b {
+  font-size: var(--text-sm);
+}
+.skill-safety-note p {
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+.reference-learning {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+.reference-learning > div {
+  display: grid;
+  gap: 2px;
+}
+.reference-learning small {
+  color: var(--text-tertiary);
+}
+.reference-learning > button {
+  justify-self: start;
+}
+.reference-file {
+  position: relative;
+  display: flex;
+}
+.reference-file input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.reference-file span {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 var(--space-3);
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+}
+.reference-file:hover span,
+.reference-file:focus-within span {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.skill-list {
+  display: grid;
+  gap: 0;
+}
+.skill-list > .panel-title {
+  margin-bottom: var(--space-3);
+}
+.skill-list > article {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-4) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.skill-summary {
+  display: grid;
+  gap: 2px;
+}
+.skill-summary small {
+  color: var(--text-secondary);
+  line-height: var(--leading-normal);
+}
+
+@media (max-width: 1100px) {
+  .model-layout,
+  .skills-layout {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 720px) {
+  .saved-list > article {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .service-actions {
+    grid-column: 1 / -1;
+    flex-wrap: wrap;
+  }
+}
+
+.skill-swatch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 10px 1fr;
+  gap: 3px;
+  width: 52px;
+  height: 36px;
+  padding: 5px;
+  border-radius: var(--radius-md);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+.skill-swatch i {
+  border-radius: 2px;
+}
+.skill-swatch i:first-child {
+  grid-column: 1 / -1;
+  width: 70%;
+  height: 4px;
+  align-self: center;
+}
+
+/* Optional model roles */
+.role-routing {
+  margin-top: var(--space-7);
+}
+.role-routing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+.role-card {
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+}
+.role-card header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.role-card header > div {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+}
+.role-card header b {
+  font-size: var(--text-md);
+}
+.role-card header small {
+  color: var(--text-tertiary);
+  line-height: var(--leading-normal);
+}
+.role-card-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.role-card-add {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr) auto;
+  gap: var(--space-2);
+}
+@media (max-width: 1100px) {
+  .role-routing-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 720px) {
+  .role-card-add {
+    grid-template-columns: 1fr;
+  }
+}

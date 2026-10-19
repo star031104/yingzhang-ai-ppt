@@ -46,6 +46,11 @@ def _layout_score(layout, spec: dict) -> float:
         score += 8
     if "blank" in name or "空白" in name:
         score -= 30
+    reference = spec.get("referenceLayout") or {}
+    if reference.get("layout") and str(layout.name or "") == str(reference["layout"]):
+        # The planner matched this page to a reference slide built on this master layout;
+        # follow it unless the layout cannot host the page's body copy.
+        score += 60 if body_count or role in {"cover", "section", "questions"} else 10
     return score
 
 
@@ -100,9 +105,11 @@ def fill_native_template(template: bytes, slides: list[dict], output: Path) -> d
     image_filled = 0
     layout_usage: Counter = Counter()
     unmatched: list[int] = []
+    reference_matches = 0
     for spec in slides:
         layout = _select_layout(result, spec)
         layout_usage[layout.name] += 1
+        reference_matches += int(layout.name == (spec.get("referenceLayout") or {}).get("layout"))
         slide = result.slides.add_slide(layout)
         title_done = body_done = image_done = False
         image = _bound_image(spec)
@@ -134,6 +141,7 @@ def fill_native_template(template: bytes, slides: list[dict], output: Path) -> d
         "bodiesFilled": body_filled,
         "imagesFilled": image_filled,
         "layoutUsage": dict(layout_usage),
+        "referenceLayoutMatches": reference_matches,
         "unmatchedSlides": unmatched,
         "mode": "semantic-layout-routing-v2",
         "fidelityPartsRestored": fidelity_parts,

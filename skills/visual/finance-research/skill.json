@@ -1,0 +1,11 @@
+{
+  "id": "finance-research",
+  "version": "1.0.0",
+  "kind": "visual",
+  "name": "金融研报 · 高密度证据",
+  "description": "藏青、正红与细线网格组成研报版式，紧凑排版、图表先行，适合行业研究、投研汇报与经营分析。",
+  "entrypoint": "SKILL.md",
+  "permissions": {
+    "executeScripts": false
+  }
+}

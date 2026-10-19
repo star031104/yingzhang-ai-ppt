@@ -35,7 +35,10 @@ from app.intelligence.content_selection import (
     retain_source_boundaries,
     section_understanding,
 )
+from app.intelligence.embeddings import build_embedding_retriever
 from app.intelligence.numeric_claims import strict_numbers
+from app.intelligence.proposal_validator import validate_page_proposals
+from app.intelligence.retrieval import retrieval_query, section_relevance_async
 from app.jobs.manager import job_manager
 from app.jobs.progress import job_view as _job_view
 from app.personalization import service as personal
@@ -57,7 +60,7 @@ from app.presentation_intelligence.layout_planner import plan_deck_layouts
 from app.presentation_intelligence.planner import archetypes, evidence_bindings, plan_deck
 from app.presentation_intelligence.research_assets import build_research_manifest
 from app.presentation_intelligence.small_model import (
-    bounded_batch_context,
+    bounded_batch_context_async,
     build_execution_contract,
     compatible_primary_visual,
     permitted_facts,
@@ -77,6 +80,7 @@ from app.skills.project import set_project_skills
 from app.slides import load_slides
 from app.sources import build_brief_source, load_sources
 from app.sources import safe_upload_name as _safe_upload_name
+from app.templates.layout_library import attach_reference_layouts, load_reference_layout_library
 from app.workflows.project_jobs import (
     JOB_LABELS,
     ProjectJobOperations,
@@ -525,6 +529,7 @@ async def enhance_plan_with_routed_model(
     )
     strategy = builtin_strategy_memory(plan, title, preset, instructions, brief)
     strategy_error = ""
+    retriever = build_embedding_retriever(db)
     try:
         strategy_raw = await client.chat_completion(
             model.model_id,
@@ -580,8 +585,8 @@ async def enhance_plan_with_routed_model(
         start, end = int(batch["start"]), int(batch["end"])
         expected_batch = end - start + 1
         batch_slides = plan["slides"][start - 1:end]
-        context = bounded_batch_context(
-            sources, batch_slides, title, preset, instructions, int(policy["context_limit"])
+        context = await bounded_batch_context_async(
+            sources, batch_slides, title, preset, instructions, int(policy["context_limit"]), retriever
         )
         facts = permitted_facts(plan["evidence"], batch_slides)
         batch_prompt = (
@@ -671,6 +676,12 @@ async def enhance_plan_with_routed_model(
         if position not in by_position and unpositioned:
             by_position[position] = unpositioned.pop(0)
     reconciled = len(proposed) != len(expected_positions) or set(by_position) != set(expected_positions)
+    # Rules validate (and repair or reject) every model proposal before it is merged.
+    proposal_validation = validate_page_proposals(
+        plan, by_position, preset=preset, deck_title=title, extra_pages=len(unpositioned)
+    )
+    by_position = proposal_validation.pop("proposals")
+    plan["proposalValidation"] = proposal_validation
     used_title_keys: set[str] = set()
     for slide in plan["slides"]:
         item = by_position.get(slide["position"])
@@ -866,6 +877,7 @@ async def enhance_plan_with_routed_model(
         "batchErrors": batch_errors,
         "strategyError": strategy_error,
         "reviewError": review_error,
+        "proposalValidation": proposal_validation["summary"],
         "policy": policy,
         "stages": {"strategy": 1, "segments": batch_count, "review": 1},
         "ruleOwnedFields": ["position", "sourceRefs", "evidenceBindings", "numericWhitelist", "exportSafety"],
@@ -912,12 +924,21 @@ async def _plan_project_core(project_id: str, body: PlanRequest, db: Session):
     # Persist the project selection before the awaited model calls. Keeping this
     # DELETE transaction open locks SQLite writers, including job progress ticks.
     db.commit()
+    relevance, retrieval_info = None, {"strategy": "bm25", "dense": False}
+    retriever = build_embedding_retriever(db)
+    if retriever is not None:
+        # Dense relevance only refines record selection when an embedding model is routed.
+        relevance, retrieval_info = await section_relevance_async(
+            sources, retrieval_query(body.title, body.preset, instructions), retriever
+        )
+        relevance = relevance if retrieval_info.get("dense") else None
     plan = plan_deck(
-        sources, body.title, body.preset, body.slide_count, instructions, brief=brief
+        sources, body.title, body.preset, body.slide_count, instructions, brief=brief,
+        relevance=relevance,
     )
     builtin_plan = copy.deepcopy(plan)
     baseline_plan = plan_deck(sources, body.title, body.preset, body.slide_count, instructions,
-                              brief=professional_brief(body)) if snapshot and (snapshot.get("preferences") or snapshot.get("examples") or snapshot.get("reference")) else None
+                              brief=professional_brief(body), relevance=relevance) if snapshot and (snapshot.get("preferences") or snapshot.get("examples") or snapshot.get("reference")) else None
     baseline_model = None
     if baseline_plan:
         baseline_plan, baseline_model = await enhance_plan_with_routed_model(
@@ -956,9 +977,13 @@ async def _plan_project_core(project_id: str, body: PlanRequest, db: Session):
     design_system = build_design_system(body.preset, selected_skills, brief)
     base_design_system = build_design_system(body.preset, selected_skills, professional_brief(body))
     design_system = personal.compile_design(design_system, snapshot, explicit_style=bool(selected_skills or body.brand_name or re.search(r"字体|配色|颜色|版式|视觉|样式|风格|留白|密度|字号", body.instructions)))
+    reference_layouts = attach_reference_layouts(
+        plan["slides"], load_reference_layout_library(db, selected_skills, snapshot)
+    )
     layout_planning = plan_deck_layouts(
         plan["slides"], body.preset, brief, design_system.get("referenceGrammar", {})
     )
+    layout_planning["referenceLayouts"] = reference_layouts
     plan["layoutPlanning"] = layout_planning
     plan["narrative"]["visualRhythm"] = layout_planning["familySequence"]
     research_manifest = build_research_manifest(sources, plan["slides"], brief)
@@ -1005,7 +1030,9 @@ async def _plan_project_core(project_id: str, body: PlanRequest, db: Session):
                 "retrieval": {
                     "strategy": "page-contract-bounded-evidence-window",
                     "contextLimit": (plan.get("orchestration", {}).get("policy") or {}).get("context_limit", 0),
+                    "ranking": retrieval_info,
                 },
+                "proposalValidation": plan.get("proposalValidation"),
                 "sourceFigureBindings": source_figures,
                 "layoutPlanning": layout_planning,
                 "researchManifest": research_manifest,

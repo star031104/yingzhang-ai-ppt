@@ -1,8 +1,11 @@
 import os
 
-os.environ["SLIDEFORGE_DATABASE_URL"] = "sqlite:///./runtime/data/test.db"
-os.environ["SLIDEFORGE_ARTIFACT_ROOT"] = "./runtime/artifacts-test"
-os.environ["SLIDEFORGE_PUBLIC_TEST_MODE"] = "false"
+# YINGZHANG_* wins over SLIDEFORGE_*; set both so a developer shell can never
+# point the destructive test fixtures at a real workspace.
+for _prefix in ("YINGZHANG_", "SLIDEFORGE_"):
+    os.environ[f"{_prefix}DATABASE_URL"] = "sqlite:///./runtime/data/test.db"
+    os.environ[f"{_prefix}ARTIFACT_ROOT"] = "./runtime/artifacts-test"
+    os.environ[f"{_prefix}PUBLIC_TEST_MODE"] = "false"
 import pytest
 from app.db.models import Base
 from app.db.session import engine

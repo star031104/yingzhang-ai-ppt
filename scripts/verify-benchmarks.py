@@ -1,5 +1,6 @@
 """Run deterministic, synthetic-source gates before merging presentation changes."""
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -18,6 +19,8 @@ PRESETS = {
 }
 
 from app.documents import parse_source
+from app.evaluation.ppteval import evaluate_ppteval
+from app.evaluation.quiz import evaluate_quiz
 from app.presentation_intelligence.planner import plan_deck
 from app.professional.delivery import audit_delivery_profile
 from app.validation.accessibility import audit_accessibility
@@ -62,6 +65,9 @@ def main() -> int:
             for slide in body_slides
             for variant in (slide.get("layoutPlan") or {}).get("candidateOrder", [])
         }
+        # Deterministic PPTEval (rule mode) and PaperQuiz (rule questions, lexical answers).
+        ppteval = asyncio.run(evaluate_ppteval(plan["slides"], report))
+        quiz = asyncio.run(evaluate_quiz(plan["slides"], [source]))
         measured = {
             "professionalScore": report.get("professionalAudit", {}).get("overall", 0),
             "contentCoverage": coverage,
@@ -71,6 +77,11 @@ def main() -> int:
             "candidateFamilies": len(candidate_families),
             "accessibility": accessibility.get("score", 0),
             "deliveryProfile": delivery_score,
+            "pptevalContent": ppteval["deck"]["content"]["score"],
+            "pptevalDesign": ppteval["deck"]["design"]["score"],
+            "pptevalCoherence": ppteval["deck"]["coherence"]["score"],
+            "quizRetention": quiz.get("retention") or 0,
+            "quizDetailRetention": quiz.get("detailRetention") or 0,
         }
         family_failures = []
         if not report.get("passed"):
@@ -112,6 +123,8 @@ def main() -> int:
             "metrics": measured,
             "blockingErrors": report.get("blockingErrors", 0),
             "facts": len(plan.get("evidence", {}).get("facts", [])),
+            "quizQuestions": quiz.get("questionCount", 0),
+            "missingFacts": [item["claim"] for item in quiz.get("missingFacts", [])[:3]],
             "failures": family_failures,
         })
     print(json.dumps({"suite": manifest.get("version"), "families": results, "failures": failures}, ensure_ascii=False, indent=2))

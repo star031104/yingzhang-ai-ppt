@@ -1,7 +1,22 @@
-import re
+"""Hybrid source retrieval: BM25 (+ optional dense vectors) fused with RRF.
 
+The synchronous :func:`retrieve_source_context` is lexical only and fully
+deterministic. :func:`retrieve_source_context_async` additionally asks an
+:class:`~app.intelligence.embeddings.EmbeddingRetriever` for dense similarities
+and falls back to BM25 when vectors are unavailable.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import TYPE_CHECKING
+
+from app.intelligence.bm25 import BM25Index, rank_order, reciprocal_rank_fusion, tokenize
 from app.intelligence.content_selection import concise_source_context, query_terms
 from app.intelligence.evidence import split_sentences
+
+if TYPE_CHECKING:
+    from app.intelligence.embeddings import EmbeddingRetriever
 
 DOMAIN_TERMS = {
     "academic": "摘要 背景 问题 相关工作 方法 模型 架构 算法 实现 数据集 指标 实验 结果 对比 消融 局限 结论",
@@ -46,6 +61,7 @@ def _chunks(sources: list[dict], size: int = 1800) -> list[dict]:
                         "title": section.get("title", "正文"), "page": section.get("page"),
                         "text": " ".join(bucket), "part": part,
                         "order": (source_index, section_index, part),
+                        "sourceHash": source.get("sha256") or source["name"],
                     })
                     bucket = bucket[-1:]
                     length = sum(map(len, bucket))
@@ -58,24 +74,46 @@ def _chunks(sources: list[dict], size: int = 1800) -> list[dict]:
                     "title": section.get("title", "正文"), "page": section.get("page"),
                     "text": " ".join(bucket), "part": part,
                     "order": (source_index, section_index, part),
+                    "sourceHash": source.get("sha256") or source["name"],
                 })
     return chunks
 
 
-def retrieve_source_context(
-    sources: list[dict], title: str, preset: str, instructions: str, limit: int = 48000
-) -> str:
-    chunks = _chunks(sources)
-    query_terms = _terms(f"{title} {instructions} {DOMAIN_TERMS.get(preset, '')}")
-    total = max(1, len(chunks))
-    for index, chunk in enumerate(chunks):
+RELEVANCE_SCALE = 10.0
+METRIC_RE = re.compile(r"\d+(?:\.\d+)?\s*(?:%|倍|ms|秒|分钟|GB|MB)")
+
+
+def retrieval_query(title: str, preset: str, instructions: str) -> str:
+    return f"{title} {instructions} {DOMAIN_TERMS.get(preset, '')}"
+
+
+def rank_chunks(chunks: list[dict], query: str, dense: list[float] | None = None) -> list[dict]:
+    """Score chunks in place (BM25 ⊕ dense via RRF, then structural boosts) and rank them."""
+    total = len(chunks)
+    if not total:
+        return []
+    # Headings are repeated so that a matching section title outweighs a passing mention.
+    index = BM25Index([tokenize(f"{chunk['title']} {chunk['title']} {chunk['text']}") for chunk in chunks])
+    lexical = index.scores(tokenize(query))
+    rankings = [[item for item in rank_order(lexical) if lexical[item] > 0]]
+    if dense and len(dense) == total:
+        rankings.append([item for item in rank_order(dense) if dense[item] > 0])
+    fused = reciprocal_rank_fusion(rankings, total)
+    top = max(fused) or 1.0
+    for position, chunk in enumerate(chunks):
         haystack = f"{chunk['title']} {chunk['text']}".lower()
-        overlap = sum(1 + min(haystack.count(term), 3) * 0.3 for term in query_terms if term in haystack)
         heading_boost = 4 if IMPORTANT_HEADING.search(chunk["title"]) else 0
-        metric_boost = 2 if re.search(r"\d+(?:\.\d+)?\s*(?:%|倍|ms|秒|分钟|GB|MB)", haystack) else 0
-        edge_boost = 2 if index < min(3, total) or index >= max(0, total - 3) else 0
-        chunk["score"] = overlap + heading_boost + metric_boost + edge_boost
-    ranked = sorted(chunks, key=lambda item: (-item["score"], item["order"]))
+        metric_boost = 2 if METRIC_RE.search(haystack) else 0
+        edge_boost = 2 if position < min(3, total) or position >= max(0, total - 3) else 0
+        chunk["lexicalScore"] = round(lexical[position], 4)
+        if dense and len(dense) == total:
+            chunk["denseScore"] = round(dense[position], 4)
+        chunk["relevance"] = fused[position] / top
+        chunk["score"] = RELEVANCE_SCALE * chunk["relevance"] + heading_boost + metric_boost + edge_boost
+    return sorted(chunks, key=lambda item: (-item["score"], item["order"]))
+
+
+def _assemble(ranked: list[dict], title: str, instructions: str, limit: int) -> str:
     # Cover each uploaded document before spending the remainder on highly ranked passages.
     by_document = {}
     for chunk in ranked:
@@ -100,3 +138,51 @@ def retrieve_source_context(
         selected.append((chunk["document"], chunk["order"], header + text))
         used += len(header) + len(text)
     return "".join(item[2] for item in sorted(selected, key=lambda item: item[1]))
+
+
+def retrieve_source_context(
+    sources: list[dict], title: str, preset: str, instructions: str, limit: int = 48000
+) -> str:
+    """Deterministic lexical (BM25) retrieval with per-document coverage guarantees."""
+    ranked = rank_chunks(_chunks(sources), retrieval_query(title, preset, instructions))
+    return _assemble(ranked, title, instructions, limit)
+
+
+async def rank_source_chunks_async(
+    sources: list[dict], query: str, retriever: EmbeddingRetriever | None = None
+) -> tuple[list[dict], dict]:
+    """Rank chunks with dense vectors when a retriever is available; never raises for provider faults."""
+    chunks = _chunks(sources)
+    info = {"strategy": "bm25", "dense": False, "chunks": len(chunks)}
+    dense = None
+    if retriever is not None and chunks:
+        try:
+            dense = await retriever.similarities(query, chunks)
+            info.update({"strategy": "hybrid-bm25-dense-rrf", "dense": True,
+                         "embeddingRequests": retriever.requests, "cacheHits": retriever.cache_hits})
+        except Exception as exc:  # noqa: BLE001 - any provider fault degrades to BM25
+            info["denseError"] = str(exc)[:180] or type(exc).__name__
+            dense = None
+    return rank_chunks(chunks, query, dense), info
+
+
+async def retrieve_source_context_async(
+    sources: list[dict], title: str, preset: str, instructions: str, limit: int = 48000,
+    retriever: EmbeddingRetriever | None = None,
+) -> str:
+    ranked, _info = await rank_source_chunks_async(
+        sources, retrieval_query(title, preset, instructions), retriever
+    )
+    return _assemble(ranked, title, instructions, limit)
+
+
+async def section_relevance_async(
+    sources: list[dict], query: str, retriever: EmbeddingRetriever | None = None
+) -> tuple[dict[tuple[str, str], float], dict]:
+    """Best fused relevance (0–1) per (document, section) for planning-time record selection."""
+    ranked, info = await rank_source_chunks_async(sources, query, retriever)
+    relevance: dict[tuple[str, str], float] = {}
+    for chunk in ranked:
+        key = (chunk["document"], chunk["section"])
+        relevance[key] = max(relevance.get(key, 0.0), float(chunk.get("relevance", 0.0)))
+    return relevance, info

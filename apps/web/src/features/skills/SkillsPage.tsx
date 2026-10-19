@@ -4,7 +4,7 @@ import { compileReferenceSkill, installSkillUrl, removeSkill } from "../../api";
 import type { Skill } from "../../api";
 import { Empty } from "../../components/Empty";
 import { Notice } from "../../components/Notice";
-import { skillDescription, skillName, skillTags } from "./skillMeta";
+import { skillDescription, skillName, skillPalette, skillTags } from "./skillMeta";
 
 
 export function SkillsPage({
@@ -134,7 +134,13 @@ export function SkillsPage({
           {skills.length ? (
             skills.map((skill) => (
               <article key={skill.id}>
-                <div className="skill-icon">技</div>
+                {skillPalette(skill) ? (
+                  <div className="skill-swatch" aria-hidden="true" style={{ background: skillPalette(skill)![0] }}>
+                    <i style={{ background: skillPalette(skill)![1] }} />
+                    <i style={{ background: skillPalette(skill)![2] }} />
+                    <i style={{ background: skillPalette(skill)![3] }} />
+                  </div>
+                ) : <div className="skill-icon">技</div>}
                 <div className="skill-summary">
                   <b>{skillName(skill)}</b>
                   <small>{skillDescription(skill)}</small>

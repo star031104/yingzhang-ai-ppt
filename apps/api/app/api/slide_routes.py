@@ -18,6 +18,11 @@ from app.personalization.runtime import lock as personal_lock
 from app.personalization.service import record_feedback
 from app.presentation_engine.service import EngineError, presentation_engine
 from app.presentation_intelligence.object_edit import apply_object_edit
+from app.presentation_intelligence.region_edit import (
+    plan_region_edit,
+    target_label,
+    targets_in_region,
+)
 from app.professional import append_stage_trace, diff_slide_specs
 from app.security.public_access import current_user
 from app.slides import load_slides
@@ -41,6 +46,20 @@ class ObjectEditRequest(BaseModel):
     target: dict = Field(default_factory=dict)
     operation: Literal["replace", "append", "delete", "move"] = "replace"
     value: str | list[str] | None = None
+    rerender: bool = True
+    revision: int | None = Field(default=None, ge=1)
+
+
+class RegionBox(BaseModel):
+    x: float = Field(ge=0, le=1280)
+    y: float = Field(ge=0, le=720)
+    width: float = Field(gt=0, le=1280)
+    height: float = Field(gt=0, le=720)
+
+
+class RegionEditRequest(BaseModel):
+    bbox: RegionBox
+    instruction: str = Field(min_length=2, max_length=600)
     rerender: bool = True
     revision: int | None = Field(default=None, ge=1)
 
@@ -265,32 +284,114 @@ def chat_edit_slide(
     except (ValueError, TypeError) as exc:
         raise HTTPException(422, str(exc)) from exc
     change_set["review"] = diff_slide_specs(before_spec, spec)
+    render_result = _commit_object_edit(
+        project, row, before_spec, spec, request, db,
+        instruction=body.instruction, reason=f"页内对话：{body.instruction}",
+        target=body.target, change_set=change_set, rerender=body.rerender,
+    )
+    return {
+        "slide": {**row.spec, "revision": row.current_version},
+        "version": row.current_version,
+        "changeSet": change_set,
+        "render": render_result,
+    }
+
+
+def _commit_object_edit(
+    project, row: SlideSpecRecord, before_spec: dict, spec: dict, request: Request, db: Session,
+    *, instruction: str, reason: str, target: dict, change_set: dict, rerender: bool,
+):
+    """Persist one user edit as a new slide version and optionally re-render the page."""
     row.current_version += 1
     row.spec = spec
     actor = (current_user(request) or {}).get("name", "本机管理员")
-    record_feedback(db, row, before_spec, "object-edit", body.instruction)
+    record_feedback(db, row, before_spec, "object-edit", instruction)
     db.add(SlideVersion(
-        slide_id=slide_id,
+        slide_id=row.id,
         version=row.current_version,
         spec=copy.deepcopy(spec),
-        reason=f"页内对话：{body.instruction}",
+        reason=reason,
     ))
     db.add(SlideEditMessage(
-        slide_id=slide_id,
+        slide_id=row.id,
         actor=actor,
-        instruction=body.instruction,
-        target=body.target,
+        instruction=instruction,
+        target=target,
         change_set=change_set,
         version=row.current_version,
     ))
     db.commit()
-    render_result = None
     rendered = Path(project.artifact_path) / "slides" / "rendered" / "index.html"
-    if body.rerender and rendered.exists():
-        render_result = _regenerate_slide_core(project_id, slide_id, db)
+    if rerender and rendered.exists():
+        return _regenerate_slide_core(project.id, row.id, db)
+    return None
+
+
+def _selected_scene(slide_id: str, db: Session) -> dict | None:
+    """Load the measured scene of the candidate currently shown for a slide."""
+    candidates = list(db.scalars(select(SlideCandidate).where(SlideCandidate.slide_id == slide_id)))
+    chosen = next((item for item in candidates if item.selected), None)
+    if not chosen:
+        return None
+    path = Path(chosen.artifact_path).with_suffix(".scene.json")
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+@router.post("/projects/{project_id}/slides/{slide_id}/region-edit")
+def region_edit_slide(
+    project_id: str,
+    slide_id: str,
+    body: RegionEditRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Edit the objects under a rectangle drawn on the rendered slide (1280x720 coordinates)."""
+    project = project_or_404(project_id, db)
+    row = db.get(SlideSpecRecord, slide_id)
+    if not row or row.project_id != project_id:
+        raise HTTPException(404, "Slide not found")
+    ensure_slide_revision(row, body.revision)
+    scene = _selected_scene(slide_id, db)
+    if not scene:
+        raise HTTPException(409, "当前页还没有可框选的渲染结果，请先生成页面")
+    bbox = body.bbox.model_dump()
+    try:
+        targets = targets_in_region(scene, row.spec, bbox)
+        edits = plan_region_edit(body.instruction, targets, row.spec)
+        before_spec = copy.deepcopy(row.spec)
+        spec, change_sets = copy.deepcopy(row.spec), []
+        for edit in edits:
+            spec, change_set = apply_object_edit(
+                spec, body.instruction, edit["target"], edit["operation"], edit["value"]
+            )
+            change_sets.append(change_set)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    edited = [
+        {
+            **edit["target"],
+            "operation": edit["operation"],
+            "label": "页面版式" if edit["target"]["kind"] == "visual" else target_label(edit["target"]),
+        }
+        for edit in edits
+    ]
+    region = {"bbox": bbox, "targets": targets}
+    change_set = {"region": region, "edits": change_sets, "review": diff_slide_specs(before_spec, spec)}
+    render_result = _commit_object_edit(
+        project, row, before_spec, spec, request, db,
+        instruction=body.instruction, reason=f"框选修改：{body.instruction}",
+        target={"kind": "region", **region}, change_set=change_set, rerender=body.rerender,
+    )
     return {
         "slide": {**row.spec, "revision": row.current_version},
         "version": row.current_version,
+        "region": region,
+        "edited": edited,
         "changeSet": change_set,
         "render": render_result,
     }

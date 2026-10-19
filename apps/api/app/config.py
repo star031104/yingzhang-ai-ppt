@@ -1,11 +1,28 @@
 from pathlib import Path
 
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    DotEnvSettingsSource,
+    EnvSettingsSource,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
+
+# YINGZHANG_ is the documented prefix; SLIDEFORGE_ stays accepted for existing installs.
+ENV_PREFIX = "YINGZHANG_"
+LEGACY_ENV_PREFIX = "SLIDEFORGE_"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="SLIDEFORGE_", env_file=".env", extra="ignore")
+    """Runtime settings.
+
+    Precedence (highest first): constructor arguments, process ``YINGZHANG_*``,
+    process ``SLIDEFORGE_*``, ``.env`` ``YINGZHANG_*``, ``.env`` ``SLIDEFORGE_*``.
+    Within the same source the new prefix always wins.
+    """
+
+    model_config = SettingsConfigDict(env_prefix=ENV_PREFIX, env_file=".env", extra="ignore")
     database_url: str = "sqlite:///./runtime/data/yingzhang.db"
     migrate_on_startup: bool = True
     artifact_root: Path = Path("./runtime/artifacts")
@@ -34,6 +51,30 @@ class Settings(BaseSettings):
     ocr_executable: str | None = None
     ocr_languages: str = "chi_sim+eng"
     ocr_max_pages: int = 20
+    sqlite_busy_timeout_ms: int = Field(default=15000, ge=1000, le=120000)
+    ffmpeg: str | None = None
+    tts_voice: str = "alloy"
+    tts_format: str = "mp3"
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        legacy_env = EnvSettingsSource(settings_cls, env_prefix=LEGACY_ENV_PREFIX)
+        legacy_dotenv = DotEnvSettingsSource(settings_cls, env_prefix=LEGACY_ENV_PREFIX)
+        return (
+            init_settings,
+            env_settings,
+            legacy_env,
+            dotenv_settings,
+            legacy_dotenv,
+            file_secret_settings,
+        )
 
     @property
     def cors_origin_list(self):

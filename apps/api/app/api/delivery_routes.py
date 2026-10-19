@@ -15,12 +15,23 @@ from app.db.models import (
     ExportRecord,
     ImportedDeck,
     ImportedObjectEdit,
+    Job,
     Project,
     SlideSpecRecord,
     SlideVersion,
 )
 from app.db.session import get_db
+from app.delivery_media.ffmpeg import find_ffmpeg
+from app.delivery_media.job import (
+    VIDEO_FORMAT,
+    VIDEO_JOB_KIND,
+    NarratedVideoRequest,
+    new_video_job,
+    run_video_job,
+)
 from app.evaluation.fingerprints import export_source_fingerprint
+from app.jobs.manager import job_manager
+from app.jobs.progress import job_view
 from app.personalization.runtime import assert_current, guarded_sync_generation, lock
 from app.powerpoint import (
     apply_generated_effects,
@@ -28,7 +39,7 @@ from app.powerpoint import (
     inspect_pptx,
     update_imported_object,
 )
-from app.presentation_engine.service import EngineError, presentation_engine
+from app.presentation_engine.service import EngineError, load_export_report, presentation_engine
 from app.professional import audit_delivery_profile
 from app.security.public_access import current_user
 from app.security.uploads import read_upload_limited
@@ -310,7 +321,7 @@ def export_pptx(
                 raise HTTPException(409, "参考模板已失效，请重新规划")
             reference_report = fill_native_template((reference_root(reference) / "reference.pptx").read_bytes(), slides, target)
         else:
-            presentation_engine.run("pptx", slides, target)
+            presentation_engine.run("pptx", slides, target, scene_root=Path(project.artifact_path) / "slides" / "rendered")
         from app.personalization.roundtrip_learning import annotate_export
         annotate_export(target, project_id, slides)
         effects_report = apply_generated_effects(target, slides)
@@ -328,6 +339,7 @@ def export_pptx(
             "mode": "balanced",
             "sceneIR": scene_deck.get("version"),
             "compilerBackend": "semantic-native-pptx-v2",
+            "sceneExport": load_export_report(target),
             "nativeObjects": sum(node.get("preferredExport") == "native" for node in nodes),
             "fallbackObjects": len(degraded),
             "degradations": [
@@ -361,7 +373,8 @@ def export_single_slide_pptx(project_id: str, slide_id: str, db: Session = Depen
     target = Path(project.artifact_path) / "exports" / "slides" / f"slide-{row.position:02d}.pptx"
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
-        presentation_engine.run("pptx", [copy.deepcopy(row.spec)], target)
+        presentation_engine.run("pptx", [copy.deepcopy(row.spec)], target,
+                                scene_root=Path(project.artifact_path) / "slides" / "rendered")
         effects_report = apply_generated_effects(target, [copy.deepcopy(row.spec)])
     except EngineError as exc:
         raise HTTPException(500, str(exc)) from exc
@@ -550,6 +563,65 @@ def generate_narration(
         })
     db.commit()
     return {"locale": body.locale, "slides": result, "totalSeconds": sum(item["estimatedSeconds"] for item in result)}
+
+
+@router.post("/projects/{project_id}/jobs/video", status_code=202)
+async def start_narrated_video_job(
+    project_id: str, body: NarratedVideoRequest, db: Session = Depends(get_db)
+):
+    """导出讲解视频：讲稿 → 语音合成（可选）→ 逐页画面与字幕合成 MP4。"""
+    from app.api.project_lifecycle import project_lifecycle_lock
+
+    with project_lifecycle_lock(project_id):
+        project = project_or_404(project_id, db)
+        ensure_current_preview(project, load_slides(project_id, db))
+        if not find_ffmpeg():
+            raise HTTPException(409, "未找到 ffmpeg；请安装 ffmpeg 或设置 YINGZHANG_FFMPEG 后再导出讲解视频")
+        active = db.scalar(
+            select(Job)
+            .where(Job.project_id == project_id, Job.kind == VIDEO_JOB_KIND,
+                   Job.status.in_({"queued", "running"}))
+            .order_by(Job.created_at.desc())
+        )
+        if active:
+            return job_view(active)
+        if not job_manager.has_capacity():
+            raise HTTPException(503, "生成队列已满，请稍后再提交任务")
+        payload = body.model_dump()
+        job = new_video_job(project_id, payload)
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        job_manager.spawn(run_video_job(job.id, project_id, payload), job_id=job.id)
+        return job_view(job)
+
+
+@router.get("/projects/{project_id}/export/video")
+def download_narrated_video(
+    project_id: str, subtitles: bool = False, db: Session = Depends(get_db)
+):
+    """Download the latest narrated video (or its SRT) that matches current slide content."""
+    project = project_or_404(project_id, db)
+    fingerprint = export_source_fingerprint(load_slides(project_id, db))
+    record = next((
+        row for row in db.scalars(
+            select(ExportRecord)
+            .where(ExportRecord.project_id == project_id, ExportRecord.format == VIDEO_FORMAT)
+            .order_by(ExportRecord.created_at.desc())
+        )
+        if (row.report or {}).get("sourceFingerprint") == fingerprint
+    ), None)
+    target = Path(record.artifact_path) if record else None
+    if not record or not target.is_file() or not is_versioned_export(project, target):
+        raise HTTPException(409, "当前内容还没有对应的讲解视频，请先导出讲解视频")
+    if subtitles:
+        srt = target.with_suffix(".srt")
+        if not srt.is_file():
+            raise HTTPException(404, "该讲解视频未生成字幕")
+        return FileResponse(srt, media_type="application/x-subrip", filename="presentation.srt")
+    if artifact_sha256(target) != (record.report or {}).get("artifactSha256"):
+        raise HTTPException(409, "讲解视频完整性校验失败，请重新导出")
+    return FileResponse(target, media_type="video/mp4", filename="presentation.mp4")
 
 
 @router.post("/projects/{project_id}/powerpoint/import", status_code=201)

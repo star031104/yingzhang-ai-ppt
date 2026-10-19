@@ -3,6 +3,9 @@ import {sourceLabel} from './source-label.mjs'
 import {escapeHtml} from './utils.mjs'
 import {metricDataset,namedMetricTable,transitionDataset,metricTokens as metricNums} from './data.mjs'
 import {resolveComposition,contentLayout,editorialContent,sameStatement} from './content.mjs'
+import {chartModel,chartSvg} from './charts.mjs'
+import {grammarFor,grammarVars,grammarClasses,grammarStyles,decorations,iconsAllowed} from './grammar.mjs'
+import {iconsForItems,iconSvg} from './icons.mjs'
 
 export const themes={forest:{bg:'#f6f7fb',ink:'#182033',accent:'#78e3c5',primary:'#625bf6',deep:'#20284d',line:'#e3e7f0'},ocean:{bg:'#f3f8fb',ink:'#102631',accent:'#66d9ef',primary:'#276c89',deep:'#123c4a',line:'#dce9ee'},ember:{bg:'#fbf5f1',ink:'#2b1912',accent:'#ffb36b',primary:'#a54b27',deep:'#5d281c',line:'#eddfd7'}}
 const roleLabels={cover:'封面',agenda:'目录',section:'章节',background:'研究背景',problem:'研究问题',method:'方法论',architecture:'系统架构',evidence:'证据链路',data:'数据结果',comparison:'性能对比',insight:'关键洞察',conclusion:'结论',questions:'问答',content:'正文'}
@@ -11,11 +14,16 @@ const source=sourceLabel
 const cleanAudienceText=value=>String(value??'').replace(/\s*[（(]\s*(?:S|SRC)\s*\d*\s*[）)]/gi,'').replace(/\s*\[\s*(?:S|SRC)\s*\d+\s*\]/gi,'').replace(/\s{2,}/g,' ').trim()
 const cleanAudienceSpec=spec=>({...spec,message:cleanAudienceText(spec.message),content:{...(spec.content??{}),title:cleanAudienceText(spec.content?.title),bullets:(spec.content?.bullets??[]).map(cleanAudienceText)}})
 const brandLabel=spec=>String(spec.designSystem?.brand?.name??'').trim()
-const brandMark=spec=>spec.designSystem?.brand?.logoDataUri?`<img class="brand-logo" src="${escapeHtml(spec.designSystem.brand.logoDataUri)}" alt="${escapeHtml(brandLabel(spec)||'品牌标识')}">`:(brandLabel(spec)?`<span>${escapeHtml(brandLabel(spec))}</span>`:'')
+const brandMark=spec=>spec.designSystem?.brand?.logoDataUri?`<img class="brand-logo" data-asset="brand-logo" src="${escapeHtml(spec.designSystem.brand.logoDataUri)}" alt="${escapeHtml(brandLabel(spec)||'品牌标识')}">`:(brandLabel(spec)?`<span>${escapeHtml(brandLabel(spec))}</span>`:'')
+// Index into assetBindings lets the PPTX compiler embed the original file, not the inlined copy.
+const assetRef=(spec,asset)=>{const index=(spec.assetBindings??[]).indexOf(asset);return index>=0?` data-asset-index="${index}"`:''}
 const imageAsset=spec=>(spec.assetBindings??[]).find(item=>item.dataUri&&['generated-image','source-image','licensed-image'].includes(item.type))
 const mediaAsset=spec=>(spec.assetBindings??[]).find(item=>item.mediaUri&&['licensed-video','licensed-audio'].includes(item.type))
-const itemCards=(items,kind='card')=>items.map((item,index)=>`<article class="${kind}"><b>${String(index+1).padStart(2,'0')}</b><p>${escapeHtml(item)}</p></article>`).join('')
-const flowNodes=items=>items.map((item,index)=>`<article class="flow-node"><b>${String(index+1).padStart(2,'0')}</b><p>${escapeHtml(item)}</p></article>${index<items.length-1?'<i>→</i>':''}`).join('')
+// Icons are chosen from the item text (Chinese/English keywords); unmatched items get none.
+let activeGrammar=null
+const iconMarks=items=>iconsAllowed(activeGrammar)?iconsForItems(items).map(name=>name?`<i class="yz-icon-wrap">${iconSvg(name,{size:26,stroke:activeGrammar?.iconStyle?.stroke??1.75})}</i>`:''):items.map(()=>'')
+const itemCards=(items,kind='card')=>{const icons=iconMarks(items);return items.map((item,index)=>`<article class="${kind}"><b>${String(index+1).padStart(2,'0')}</b>${icons[index]}<p>${escapeHtml(item)}</p></article>`).join('')}
+const flowNodes=items=>{const icons=iconMarks(items);return items.map((item,index)=>`<article class="flow-node"><b>${String(index+1).padStart(2,'0')}</b>${icons[index]}<p>${escapeHtml(item)}</p></article>${index<items.length-1?'<i>→</i>':''}`).join('')}
 const metricCards=items=>items.filter(item=>metricNums(item).length).slice(0,3).map((item,index)=>`<article class="metric-card ${index===1?'focus':''}" data-scene-type="shape"><strong data-scene-type="text">${escapeHtml(metricValue(item))}</strong><p data-scene-type="text">${escapeHtml(item)}</p></article>`).join('')
 const metricTable=items=>{
  const table=namedMetricTable(items)
@@ -23,22 +31,18 @@ const metricTable=items=>{
  return `<div class="data-table-wrap" data-scene-type="table" data-content-indices="${items.map((_,i)=>i).join(',')}"><table><thead><tr>${table.headers.map(header=>`<th>${escapeHtml(header)}</th>`).join('')}</tr></thead><tbody>${table.rows.map(row=>`<tr>${row.map(value=>`<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`
 }
 
-function groupedMetricChart(items){
- const dataset=transitionDataset(items)||metricDataset(items)
- if(!dataset)return ''
- const span=dataset.axisMax-dataset.axisMin,zero=-dataset.axisMin/span*100
- const colors=['var(--primary)','var(--accent)','var(--deep)','#68758b']
- const legend=dataset.series.map((series,index)=>`<span><i style="background:${colors[index%colors.length]}"></i>${escapeHtml(series.name)}</span>`).join('')
- const rows=dataset.series[0].labels.map((label,row)=>`<article class="dataset-row"><h3>${escapeHtml(label)}</h3><div>${dataset.series.map((series,index)=>{
-  const value=series.values[row],left=(Math.min(0,value)-dataset.axisMin)/span*100,width=Math.abs(value)/span*100
-  return `<div class="dataset-series"><span>${escapeHtml(series.name)}</span><div class="dataset-track"><i class="dataset-zero" style="left:${zero}%"></i><i class="dataset-bar" style="left:${left}%;width:${width}%;background:${colors[index%colors.length]}"></i></div><b>${escapeHtml(`${value}${dataset.unit}`)}</b></div>`
- }).join('')}</div></article>`).join('')
- return `<div class="dataset-chart" data-scene-type="chart" data-content-indices="${items.map((_,i)=>i).join(',')}"><div class="dataset-legend">${legend}</div>${rows}<div class="dataset-axis">共同刻度：${escapeHtml(`${dataset.axisMin}${dataset.unit} 至 ${dataset.axisMax}${dataset.unit}`)}</div></div>`
+// Evidence charts render as inline SVG; the same model drives the native PPTX chart.
+function chartFigure(spec,items){
+ const model=chartModel(spec,items)
+ if(!model)return ''
+ const svg=chartSvg(model,{width:1144,height:320}) // records the plot layout on the model
+ return `<div class="dataset-chart" data-chart-type="${model.type}" data-scene-type="chart" data-chart="${escapeHtml(JSON.stringify(model))}" data-content-indices="${items.map((_,i)=>i).join(',')}">${svg}</div>`
 }
 const agendaVisual=(variant,items)=>{
  if(variant==='section-map')return `<div class="agenda-map" data-scene-type="diagram"><div class="agenda-track"></div>${items.slice(0,4).map((item,index)=>`<article><b>${String(index+1).padStart(2,'0')}</b><p>${escapeHtml(item)}</p></article>`).join('')}</div>`
- if(variant==='agenda-cards')return `<div class="agenda-grid">${items.slice(0,4).map((item,index)=>`<article class="agenda-card"><b>${String(index+1).padStart(2,'0')}</b><p>${escapeHtml(item)}</p></article>`).join('')}</div>`
- return `<div class="agenda-list">${items.slice(0,4).map((item,index)=>`<article><b>${String(index+1).padStart(2,'0')}</b><p>${escapeHtml(item)}</p></article>`).join('')}</div>`
+ const shown=items.slice(0,4),icons=iconMarks(shown)
+ if(variant==='agenda-cards')return `<div class="agenda-grid">${shown.map((item,index)=>`<article class="agenda-card"><b>${String(index+1).padStart(2,'0')}${icons[index]}</b><p>${escapeHtml(item)}</p></article>`).join('')}</div>`
+ return `<div class="agenda-list">${shown.map((item,index)=>`<article><b>${String(index+1).padStart(2,'0')}${icons[index]}</b><p>${escapeHtml(item)}</p></article>`).join('')}</div>`
 }
 const timelineVisual=items=>`<div class="timeline-strip" data-scene-type="diagram"><div class="timeline-line"></div>${items.slice(0,5).map((item,index)=>`<article><b>${String(index+1).padStart(2,'0')}</b><i></i><p>${escapeHtml(item)}</p></article>`).join('')}</div>`
 const layeredVisual=items=>`<div class="layer-stack" data-scene-type="diagram">${items.slice(0,4).map((item,index)=>`<article style="--indent:${index}"><b>层级 ${String(index+1).padStart(2,'0')}</b><p>${escapeHtml(item)}</p></article>`).join('')}</div>`
@@ -49,7 +53,7 @@ const comparisonColumns=items=>{
 }
 const problemContrast=(items,message)=>`<div class="problem-contrast"><div class="problem-thesis"><small>核心矛盾</small><strong>${escapeHtml(message)}</strong></div><div>${items.slice(0,3).map((item,index)=>`<article><b>${String(index+1).padStart(2,'0')}</b><p>${escapeHtml(item)}</p></article>`).join('')}</div></div>`
 const problemSequence=(items,message)=>`<div class="problem-sequence" data-scene-type="diagram">${items.slice(0,3).map((item,index)=>`<article><span>${['现象','约束','后果'][index]??`问题 ${index+1}`}</span><b>${String(index+1).padStart(2,'0')}</b><p>${escapeHtml(item)}</p></article>${index<Math.min(2,items.length-1)?'<i>→</i>':''}`).join('')}<strong>${escapeHtml(message)}</strong></div>`
-const summaryGrid=items=>`<div class="summary-grid">${items.slice(0,4).map((item,index)=>`<article class="${index===0?'lead':''}"><b>${String(index+1).padStart(2,'0')}</b><p>${escapeHtml(item)}</p></article>`).join('')}</div>`
+const summaryGrid=items=>{const shown=items.slice(0,4),icons=iconMarks(shown);return `<div class="summary-grid">${shown.map((item,index)=>`<article class="${index===0?'lead':''}"><b>${String(index+1).padStart(2,'0')}</b>${icons[index]}<p>${escapeHtml(item)}</p></article>`).join('')}</div>`}
 const layoutKind=variant=>({scorecard:'metric',ablation:'metric',pipeline:'diagram','layered-architecture':'diagram','hub-spoke':'diagram',workflow:'diagram','three-stage':'diagram',process:'diagram','evidence-chain':'diagram','source-map':'diagram','claim-map':'diagram','metric-wall':'metric','chart-focus':'metric','table-highlight':'metric','comparison-bars':'comparison'}[variant]??variant)
 const genericTitle=/^(?:研究|项目|系统|方案)?(?:背景|问题|方法|方法论|流程|架构|数据|结果|实验|验证|分析|洞察|结论|总结|价值|优势|方向|应用)(?:与|及|和|、|的|研究|分析|验证|结果|价值|方向|应用|总结|介绍|概述|模块)*$/
 const displayTitle=spec=>{const title=String(spec.content?.title??'').trim(),message=String(spec.message??'').trim();return message&&message.length<=24&&genericTitle.test(title)?message:title||message||'未命名页面'}
@@ -60,7 +64,7 @@ function typographyStory(spec,items){
 }
 
 function sourceFigureVisual(spec,asset,variant,items){
- const image=`<img class="source-evidence" src="${escapeHtml(asset.dataUri)}" alt="${escapeHtml(asset.alt??'原文图表')}">`
+ const image=`<img class="source-evidence"${assetRef(spec,asset)} src="${escapeHtml(asset.dataUri)}" alt="${escapeHtml(asset.alt??'原文图表')}">`
  const caption=`<figcaption>${escapeHtml(asset.provenance??asset.caption??'原文图表')}</figcaption>`
  const notes=items.slice(0,4).map((item,index)=>`<article><b>${String(index+1).padStart(2,'0')}</b><p>${escapeHtml(item)}</p></article>`).join('')
  if(variant==='figure-wide')return `<div class="source-layout source-wide"><figure>${image}${caption}</figure><div class="source-wide-notes">${notes}</div></div>`
@@ -73,7 +77,7 @@ function completeContent(spec){
  const asset=imageAsset(spec),media=mediaAsset(spec),layout=contentLayout(spec,{hasAsset:Boolean(asset||media)})
  let index=0
  const columns=layout.groups.map(group=>`<div class="complete-column">${group.map(item=>`<article><b>${String(++index).padStart(2,'0')}</b><p>${escapeHtml(item)}</p></article>`).join('')}</div>`).join('')
- const illustration=asset?`<figure><img src="${escapeHtml(asset.dataUri)}" alt="${escapeHtml(asset.alt??'参考图')}"><figcaption>${escapeHtml(asset.provenance??asset.caption??'')}</figcaption></figure>`:media?`<figure><${media.type==='licensed-video'?'video':'audio'} controls src="${escapeHtml(media.mediaUri)}"></${media.type==='licensed-video'?'video':'audio'}><figcaption>${escapeHtml(media.provenance??media.caption??'')}</figcaption></figure>`:''
+ const illustration=asset?`<figure><img${assetRef(spec,asset)} src="${escapeHtml(asset.dataUri)}" alt="${escapeHtml(asset.alt??'参考图')}"><figcaption>${escapeHtml(asset.provenance??asset.caption??'')}</figcaption></figure>`:media?`<figure><${media.type==='licensed-video'?'video':'audio'}${assetRef(spec,media)} controls src="${escapeHtml(media.mediaUri)}"></${media.type==='licensed-video'?'video':'audio'}><figcaption>${escapeHtml(media.provenance??media.caption??'')}</figcaption></figure>`:''
  return `<div class="complete-content ${illustration?'with-asset':''}" style="--content-font:${layout.fontSize}px"><div class="complete-columns" style="--columns:${layout.columns}">${columns}</div>${illustration}</div><div class="complete-takeaway"><p>${escapeHtml(spec.message)}</p></div>`
 }
 
@@ -89,12 +93,12 @@ function mainVisual(spec,variant,items){
   const caption=escapeHtml(media.caption??media.alt??(media.type==='licensed-video'?'视频素材':'音频素材'))
   const provenance=escapeHtml(media.provenance??'已绑定媒体素材')
   const player=media.type==='licensed-video'
-   ?`<video data-scene-type="video" controls preload="metadata" src="${escapeHtml(media.mediaUri)}" aria-label="${caption}"></video>`
-   :`<div class="audio-stage" data-scene-type="video"><strong>音频叙事</strong><audio controls preload="metadata" src="${escapeHtml(media.mediaUri)}" aria-label="${caption}"></audio></div>`
+   ?`<video data-scene-type="video"${assetRef(spec,media)} controls preload="metadata" src="${escapeHtml(media.mediaUri)}" aria-label="${caption}"></video>`
+   :`<div class="audio-stage" data-scene-type="video"><strong>音频叙事</strong><audio${assetRef(spec,media)} controls preload="metadata" src="${escapeHtml(media.mediaUri)}" aria-label="${caption}"></audio></div>`
   return `<div class="media-story"><div class="media-points">${items.slice(0,4).map((item,index)=>`<article><b>${String(index+1).padStart(2,'0')}</b><p>${escapeHtml(item)}</p></article>`).join('')}<strong>${escapeHtml(spec.message)}</strong></div><figure>${player}<figcaption>${provenance}</figcaption></figure></div>`
  }
  const asset=imageAsset(spec)
- if(asset)return ['source-image','licensed-image'].includes(asset.type)?sourceFigureVisual(spec,asset,variant,items):`<div class="image-story"><div class="image-points">${items.slice(0,4).map((item,index)=>`<article><b>${String(index+1).padStart(2,'0')}</b><p>${escapeHtml(item)}</p></article>`).join('')}<strong>${escapeHtml(spec.message)}</strong></div><figure><img src="${escapeHtml(asset.dataUri)}" alt="${escapeHtml(asset.alt??'主题配图')}"><figcaption>${escapeHtml(asset.provenance??'主题配图')}</figcaption></figure></div>`
+ if(asset)return ['source-image','licensed-image'].includes(asset.type)?sourceFigureVisual(spec,asset,variant,items):`<div class="image-story"><div class="image-points">${items.slice(0,4).map((item,index)=>`<article><b>${String(index+1).padStart(2,'0')}</b><p>${escapeHtml(item)}</p></article>`).join('')}<strong>${escapeHtml(spec.message)}</strong></div><figure><img${assetRef(spec,asset)} src="${escapeHtml(asset.dataUri)}" alt="${escapeHtml(asset.alt??'主题配图')}"><figcaption>${escapeHtml(asset.provenance??'主题配图')}</figcaption></figure></div>`
  const requested=spec.visualIntent?.primaryVisual
  const roleOwnsComposition=['agenda','background','problem','insight','conclusion'].includes(spec.role)
  const candidateOwnsComposition=(spec.visualIntent?.archetypeCandidates??[]).includes(variant)
@@ -111,7 +115,7 @@ function mainVisual(spec,variant,items){
   if(variant==='two-column')return comparisonColumns(items)
   if(['metric-wall','scorecard'].includes(variant)){const metrics=metricCards(items);if(metrics)return `<div class="metric-grid cols-${Math.min(3,(items.filter(item=>metricNums(item).length).length||1))}">${metrics}</div><div class="chart-message">${escapeHtml(spec.message)}</div>`}
   if(variant==='table-highlight'){const table=metricTable(items);if(table)return `${table}<div class="chart-message">${escapeHtml(spec.message)}</div>`}
-  const datasetChart=groupedMetricChart(items)
+  const datasetChart=chartFigure(spec,items)
   if(datasetChart)return `${datasetChart}<div class="chart-message">${escapeHtml(spec.message)}</div>`
   const evidenceTable=metricTable(items)
   if(evidenceTable)return `${evidenceTable}<div class="chart-message">${escapeHtml(spec.message)}</div>`
@@ -148,6 +152,12 @@ function mainVisual(spec,variant,items){
 
 export function slideHtml(spec,variant='split',themeName='forest'){
  spec=cleanAudienceSpec(spec)
+ activeGrammar=grammarFor(spec)
+ try{return renderSlide(spec,variant,themeName)}finally{activeGrammar=null}
+}
+
+function renderSlide(spec,variant,themeName){
+ const grammar=activeGrammar,grammarClass=grammarClasses(grammar)
  if(variant!=='personal-reference'||!referenceRegions(spec))variant=resolveComposition(spec,variant)
  const supplied=spec.designSystem?.palette??{},fallback=themes[themeName]??themes.forest
  const color=(key)=>/^#[0-9a-f]{3,6}$/i.test(supplied[key]??'')?supplied[key]:fallback[key]
@@ -155,24 +165,25 @@ export function slideHtml(spec,variant='split',themeName='forest'){
  const profile=String(spec.designSystem?.layoutProfile??'evidence-modern').replace(/[^a-z0-9-]/gi,'-'),fontFamily=String(spec.designSystem?.typography?.fontFamily??'Microsoft YaHei'),radius=Number(spec.designSystem?.radius?.card??20)
  const focal=String(spec.layoutPlan?.focalPoint??'right').replace(/[^a-z0-9-]/gi,'-')
  const primaryRegion=(spec.layoutPlan?.regions??[]).find(item=>item.id==='primary'),supportRegion=(spec.layoutPlan?.regions??[]).find(item=>item.id==='support')
- const vars=`--bg:${t.bg};--ink:${t.ink};--accent:${t.accent};--primary:${t.primary};--deep:${t.deep};--line:${t.line};--font-family:${escapeHtml(fontFamily)};--card-radius:${radius}px;--planned-primary:${Number(primaryRegion?.w??6)}fr;--planned-support:${Number(supportRegion?.w??6)}fr`
+ const vars=`--bg:${t.bg};--ink:${t.ink};--accent:${t.accent};--primary:${t.primary};--deep:${t.deep};--line:${t.line};--font-family:${escapeHtml(fontFamily)};--card-radius:${radius}px;--planned-primary:${Number(primaryRegion?.w??6)}fr;--planned-support:${Number(supportRegion?.w??6)}fr${grammar?`;${grammarVars(grammar)}`:''}`
+ const gClass=grammarClass?` ${grammarClass}`:'',deco=dark=>decorations(grammar,{dark})
  if(variant==='personal-reference'){
   const regions=referenceRegions(spec)
   if(regions)return documentHtml(`<section class="slide variant-personal-reference" style="${vars};position:relative" data-slide-id="${escapeHtml(spec.id)}">${regions.map(region=>`<${region.title?'h1':'p'} data-scene-type="text" style="position:absolute;margin:0;left:${region.x*1280}px;top:${region.y*720}px;width:${region.w*1280}px;height:${region.h*720}px;font-size:${region.fontSize}px;font-family:${escapeHtml(region.fontFamily??fontFamily)};line-height:1.25;white-space:pre-wrap;overflow:hidden">${escapeHtml(region.text)}</${region.title?'h1':'p'}>`).join('')}<footer>${escapeHtml(source(spec))}<i>${String(spec.position).padStart(2,'0')}</i></footer></section>`)
  }
- if(spec.role==='cover'&&variant!=='content-list'){const communication=spec.designSystem?.communication??{},subtitle=communication.coverStrapline||(spec.message===title?'':spec.message),asset=imageAsset(spec),brand=brandMark(spec),meta=[communication.audience,communication.durationMinutes?`${communication.durationMinutes} 分钟`:null].filter(Boolean);return documentHtml(`<section class="slide cover profile-${profile} variant-${variant} ${asset?'has-art':''}" style="${vars}" data-slide-id="${escapeHtml(spec.id)}"><div class="orb one"></div><div class="orb two"></div>${asset?`<figure class="cover-art"><img src="${escapeHtml(asset.dataUri)}" alt="${escapeHtml(asset.alt??'封面主视觉')}"><figcaption>${escapeHtml(asset.provenance??'AI 生成概念图')}</figcaption></figure>`:''}${brand?`<div class="brand">${brand}</div>`:''}<h1>${escapeHtml(title)}</h1>${subtitle?`<p class="lead">${escapeHtml(subtitle)}</p>`:''}${items.length?`<div class="chips">${items.slice(0,3).map(x=>`<span>${escapeHtml(x)}</span>`).join('')}</div>`:''}${meta.length?`<div class="cover-meta">${meta.map(value=>`<span>${escapeHtml(value)}</span>`).join('')}</div>`:''}<footer>${escapeHtml(source(spec))}<i>${String(spec.position).padStart(2,'0')}</i></footer></section>`)}
- if(spec.role==='section'&&variant!=='content-list'){const brand=brandLabel(spec);return documentHtml(`<section class="slide section-divider profile-${profile} variant-${variant}" style="${vars}" data-slide-id="${escapeHtml(spec.id)}"><div class="section-orb"></div><div class="brand">${escapeHtml(String(spec.position).padStart(2,'0'))} · 章节导航</div><h1>${escapeHtml(title)}</h1><p>${escapeHtml(spec.message)}</p><div class="section-rule"></div><footer>${brand?`<span>${escapeHtml(brand)}</span>`:''}<i>${String(spec.position).padStart(2,'0')}</i></footer></section>`)}
- if(spec.role==='questions'&&variant!=='content-list')return documentHtml(`<section class="slide cover questions profile-${profile} variant-${variant}" style="${vars}" data-slide-id="${escapeHtml(spec.id)}"><div class="orb one"></div><div class="brand">Q & A</div><h1>${escapeHtml(title)}</h1><p class="lead">${escapeHtml(spec.message)}</p><div class="qa-list">${items.slice(0,3).map((x,i)=>`<p><b>0${i+1}</b>${escapeHtml(x)}</p>`).join('')}</div><div class="thanks">感谢聆听</div><footer>${escapeHtml(source(spec))}<i>${String(spec.position).padStart(2,'0')}</i></footer></section>`)
- return documentHtml(`<section class="slide profile-${profile} role-${escapeHtml(spec.role)} variant-${variant} focal-${focal}" style="${vars}" data-manual-layout="${Boolean(spec.layoutPlan?.manualOverride)}" data-slide-id="${escapeHtml(spec.id)}"><header><span>${brandMark(spec)}${escapeHtml(role)}</span><i>${String(spec.position).padStart(2,'0')}</i></header><h1>${escapeHtml(title)}</h1><main>${mainVisual(spec,variant,items)}</main><footer>${escapeHtml(source(spec))}<i>${String(spec.position).padStart(2,'0')}</i></footer></section>`)
+ if(spec.role==='cover'&&variant!=='content-list'){const communication=spec.designSystem?.communication??{},subtitle=communication.coverStrapline||(spec.message===title?'':spec.message),asset=imageAsset(spec),brand=brandMark(spec),meta=[communication.audience,communication.durationMinutes?`${communication.durationMinutes} 分钟`:null].filter(Boolean);return documentHtml(`<section class="slide cover profile-${profile} variant-${variant} ${asset?'has-art':''}${gClass}" style="${vars}" data-slide-id="${escapeHtml(spec.id)}">${deco(true)}<div class="orb one"></div><div class="orb two"></div>${asset?`<figure class="cover-art"><img${assetRef(spec,asset)} src="${escapeHtml(asset.dataUri)}" alt="${escapeHtml(asset.alt??'封面主视觉')}"><figcaption>${escapeHtml(asset.provenance??'AI 生成概念图')}</figcaption></figure>`:''}${brand?`<div class="brand">${brand}</div>`:''}<h1>${escapeHtml(title)}</h1>${subtitle?`<p class="lead">${escapeHtml(subtitle)}</p>`:''}${items.length?`<div class="chips">${items.slice(0,3).map(x=>`<span>${escapeHtml(x)}</span>`).join('')}</div>`:''}${meta.length?`<div class="cover-meta">${meta.map(value=>`<span>${escapeHtml(value)}</span>`).join('')}</div>`:''}<footer>${escapeHtml(source(spec))}<i>${String(spec.position).padStart(2,'0')}</i></footer></section>`)}
+ if(spec.role==='section'&&variant!=='content-list'){const brand=brandLabel(spec);return documentHtml(`<section class="slide section-divider profile-${profile} variant-${variant}${gClass}" style="${vars}" data-slide-id="${escapeHtml(spec.id)}">${deco(true)}<div class="section-orb"></div><div class="brand">${escapeHtml(String(spec.position).padStart(2,'0'))} · 章节导航</div><h1>${escapeHtml(title)}</h1><p>${escapeHtml(spec.message)}</p><div class="section-rule"></div><footer>${brand?`<span>${escapeHtml(brand)}</span>`:''}<i>${String(spec.position).padStart(2,'0')}</i></footer></section>`)}
+ if(spec.role==='questions'&&variant!=='content-list')return documentHtml(`<section class="slide cover questions profile-${profile} variant-${variant}${gClass}" style="${vars}" data-slide-id="${escapeHtml(spec.id)}">${deco(true)}<div class="orb one"></div><div class="brand">Q & A</div><h1>${escapeHtml(title)}</h1><p class="lead">${escapeHtml(spec.message)}</p><div class="qa-list">${items.slice(0,3).map((x,i)=>`<p><b>0${i+1}</b>${escapeHtml(x)}</p>`).join('')}</div><div class="thanks">感谢聆听</div><footer>${escapeHtml(source(spec))}<i>${String(spec.position).padStart(2,'0')}</i></footer></section>`)
+ return documentHtml(`<section class="slide profile-${profile} role-${escapeHtml(spec.role)} variant-${variant} focal-${focal}${gClass}" style="${vars}" data-manual-layout="${Boolean(spec.layoutPlan?.manualOverride)}" data-slide-id="${escapeHtml(spec.id)}">${deco(false)}<header><span>${brandMark(spec)}${escapeHtml(role)}</span><i>${String(spec.position).padStart(2,'0')}</i></header><h1>${escapeHtml(title)}</h1><main>${mainVisual(spec,variant,items)}</main><footer>${escapeHtml(source(spec))}<i>${String(spec.position).padStart(2,'0')}</i></footer></section>`)
 }
 
-function documentHtml(body){return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${styles}${extraStyles}${refinedStyles}${professionalStyles}${finalStyles}${textSafetyStyles}${mediaStyles}${datasetStyles}${completeStyles}${briefStyles}html,body{width:100%;height:100%;overflow:hidden}@media(max-width:1279px){body{width:1280px;height:720px;transform:scale(calc(100vw / 1280));transform-origin:top left}}</style></head><body>${body}</body></html>`}
+function documentHtml(body){return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${styles}${extraStyles}${refinedStyles}${professionalStyles}${finalStyles}${textSafetyStyles}${mediaStyles}${datasetStyles}${completeStyles}${briefStyles}${grammarStyles}html,body{width:100%;height:100%;overflow:hidden}@media(max-width:1279px){body{width:1280px;height:720px;transform:scale(calc(100vw / 1280));transform-origin:top left}}</style></head><body>${body}</body></html>`}
 
 const briefStyles=`.slide.variant-evidence-brief h1{font-size:44px;line-height:1.2;letter-spacing:-.025em;margin-top:28px}.slide.variant-evidence-brief main{margin-top:38px}.evidence-brief{display:grid;grid-template-columns:.85fr 1.15fr;gap:64px;min-height:372px}.brief-lead{padding:24px 30px 20px 0;border-top:5px solid var(--primary);display:flex;flex-direction:column;justify-content:center;gap:22px}.brief-lead>span{font-size:14px;letter-spacing:.15em;color:var(--primary);font-weight:700}.brief-lead>strong{font-size:32px;line-height:1.42;font-weight:750}.brief-points{display:flex;flex-direction:column;justify-content:center}.brief-points article{display:grid;grid-template-columns:32px 1fr;gap:18px;padding:23px 0;border-top:1px solid var(--line)}.brief-points b{font-size:12px;padding-top:6px;color:var(--primary)}.brief-points p{font-size:22px;line-height:1.48;margin:0;font-weight:600}`
 
 const completeStyles=`.slide.variant-content-list h1{font-size:42px;line-height:1.18;margin-top:24px;max-height:100px}.slide.variant-content-list main{margin-top:28px}.complete-content{height:355px;display:grid;gap:28px}.complete-content.with-asset{grid-template-columns:1.1fr .9fr}.complete-columns{display:grid;grid-template-columns:repeat(var(--columns),minmax(0,1fr));gap:44px;min-width:0}.complete-column{display:flex;flex-direction:column;justify-content:space-around;gap:12px;min-width:0}.complete-column article{display:grid;grid-template-columns:32px minmax(0,1fr);gap:12px;border-top:1px solid var(--line);padding-top:12px}.complete-column b{font-size:12px;color:var(--primary);padding-top:6px}.complete-column p{font-size:var(--content-font);line-height:1.45;margin:0;font-weight:600}.complete-takeaway{margin-top:22px;border-left:5px solid var(--primary);padding:10px 18px;background:var(--line)}.complete-takeaway p{font-size:20px;font-weight:700;line-height:1.4;margin:0}.complete-content figure{position:relative;margin:0;min-width:0;height:355px;background:white}.complete-content img,.complete-content video{width:100%;height:calc(100% - 30px);object-fit:contain}.complete-content audio{width:100%;margin-top:130px}.complete-content figcaption{font-size:12px;line-height:1.4;padding:4px 8px}`
 
-const datasetStyles=`.dataset-chart{display:grid;gap:20px}.dataset-legend{display:flex;gap:24px;font-size:15px}.dataset-legend span{display:flex;gap:8px;align-items:center}.dataset-legend i{width:12px;height:12px;display:inline-block}.dataset-row{display:grid;grid-template-columns:200px minmax(0,1fr);gap:24px;align-items:center}.dataset-row h3{font-size:18px;margin:0;line-height:1.4}.dataset-row>div{display:grid;gap:12px}.dataset-series{display:grid;grid-template-columns:120px minmax(0,1fr) 105px;gap:12px;align-items:center;font-size:16px}.dataset-series b{text-align:right}.dataset-track{position:relative;height:24px;background:var(--line)}.dataset-bar{position:absolute;top:0;height:100%}.dataset-zero{position:absolute;top:-3px;height:30px;width:1px;background:var(--ink)}.dataset-axis{font-size:13px;color:var(--ink)}`
+const datasetStyles=`.dataset-chart{display:block}.dataset-chart svg.evidence-chart{display:block;width:100%;height:auto;overflow:visible}.dataset-chart{display:grid;gap:20px}.dataset-legend{display:flex;gap:24px;font-size:15px}.dataset-legend span{display:flex;gap:8px;align-items:center}.dataset-legend i{width:12px;height:12px;display:inline-block}.dataset-row{display:grid;grid-template-columns:200px minmax(0,1fr);gap:24px;align-items:center}.dataset-row h3{font-size:18px;margin:0;line-height:1.4}.dataset-row>div{display:grid;gap:12px}.dataset-series{display:grid;grid-template-columns:120px minmax(0,1fr) 105px;gap:12px;align-items:center;font-size:16px}.dataset-series b{text-align:right}.dataset-track{position:relative;height:24px;background:var(--line)}.dataset-bar{position:absolute;top:0;height:100%}.dataset-zero{position:absolute;top:-3px;height:30px;width:1px;background:var(--ink)}.dataset-axis{font-size:13px;color:var(--ink)}`
 
 const textSafetyStyles=`.slide.cover,.slide.section-divider{color:white}.slide.cover h1,.slide.section-divider h1,.slide.cover .chips{color:white}body{word-break:normal;overflow-wrap:break-word}.slide{color:var(--ink);font-family:var(--font-family),"Microsoft YaHei",Arial,sans-serif}.slide p,.slide strong,.slide span,.slide li{word-break:normal;overflow-wrap:break-word}.data-table-wrap{min-height:0;padding:14px 18px 22px}.data-table-wrap td{font-size:20px;padding:20px 16px}.data-table-wrap th{font-size:16px;padding:18px 16px}.brand-logo{display:inline-block;max-width:120px;max-height:34px;object-fit:contain;vertical-align:middle;margin-right:12px}`
 

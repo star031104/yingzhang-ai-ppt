@@ -1,4 +1,3 @@
-import {referenceRegions} from './reference-layout.mjs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import {slideHtml,deckHtml} from './author.mjs'
@@ -7,39 +6,9 @@ import {deterministicScore,recomputeOverall,variantFamily,safeCandidate} from '.
 import {exportPptx} from './pptx.mjs'
 import {fileURLToPath,pathToFileURL} from 'node:url'
 import {renderStamp,matchesRenderStamp} from './render-input.mjs'
-import {metricDataset,namedMetricTable} from './data.mjs'
-
-const defaults={
- cover:['hero','editorial-cover','minimal-cover'],agenda:['numbered-list','section-map','agenda-cards'],section:['chapter-divider','section-statement','minimal-section'],
- background:['big-statement','context-cards','timeline'],problem:['problem-cards','contrast','before-after'],
- method:['workflow','three-stage','process'],architecture:['layered-architecture','pipeline','hub-spoke'],
- evidence:['evidence-chain','source-map','claim-map'],data:['chart-focus','metric-wall','table-highlight'],
- comparison:['comparison-bars','two-column','scorecard'],insight:['finding-cards','ablation','big-statement'],
- conclusion:['takeaways','summary-grid','next-steps'],questions:['minimal-qa','closing-statement','contact'],
- content:['split','statement','cards'],
-}
-async function hydrateAssets(spec){
- const clone=structuredClone(spec),assets=clone.assetBindings??[]
- clone.assetLoadErrors=[]
- for(const asset of assets){
-  if(!asset.path||asset.dataUri)continue
-  if(['licensed-video','licensed-audio'].includes(asset.type)){asset.mediaUri=pathToFileURL(asset.path).href;continue}
-  try{
-   const data=await fs.readFile(asset.path),ext=path.extname(asset.path).toLowerCase()
-   const mime=ext==='.svg'?'image/svg+xml':ext==='.jpg'||ext==='.jpeg'?'image/jpeg':ext==='.webp'?'image/webp':'image/png'
-   asset.dataUri=`data:${mime};base64,${data.toString('base64')}`
-  }catch{clone.assetLoadErrors.push({code:'missing-asset',severity:'error',message:'绑定的图片文件无法读取',assetId:asset.id??null})}
- }
- const logoPath=clone.designSystem?.brand?.logoPath
- if(logoPath){
-  try{
-   const data=await fs.readFile(logoPath),ext=path.extname(logoPath).toLowerCase()
-   const mime=ext==='.svg'?'image/svg+xml':ext==='.jpg'||ext==='.jpeg'?'image/jpeg':'image/png'
-   clone.designSystem.brand.logoDataUri=`data:${mime};base64,${data.toString('base64')}`
-  }catch{clone.assetLoadErrors.push({code:'missing-asset',severity:'error',message:'品牌标识文件无法读取'})}
- }
- return clone
-}
+import {candidateVariants} from './candidates.mjs'
+import {hydrateAssets} from './assets.mjs'
+export {candidateVariants}
 
 const MAX_PORTABLE_MEDIA_BYTES=50*1024*1024
 const mediaMimeByExtension={'.mp4':'video/mp4','.webm':'video/webm','.mov':'video/quicktime','.mp3':'audio/mpeg','.wav':'audio/wav','.m4a':'audio/mp4'}
@@ -69,36 +38,6 @@ async function portableDeckMedia(slides,selected,{strict=true}={}){
  return output
 }
 
-export function candidateVariants(spec){
- const personalLayout=referenceRegions(spec)?['personal-reference']:[]
- const preferred=spec.visualIntent?.selectedVariant
- const learned=spec.designSystem?.referenceGrammar?.variantByRole?.[spec.role]??[]
- const asset=(spec.assetBindings??[]).find(item=>item.path&&['generated-image','source-image','licensed-image'].includes(item.type))
- const media=(spec.assetBindings??[]).find(item=>item.path&&['licensed-video','licensed-audio'].includes(item.type))
- if(media)return [...new Set([preferred,'media-focus'].filter(Boolean))]
- if(asset){
-  if(asset.type==='generated-image')return [...new Set([preferred,'image-story'].filter(Boolean))]
-  const requested=spec.visualIntent?.archetypeCandidates
-  const variants=Array.isArray(requested)&&requested.length?requested:['figure-wide','figure-analysis','image-story']
-  return [...new Set([preferred,...learned,...variants].filter(Boolean))].slice(0,5)
- }
- const planned=spec.layoutPlan?.candidateOrder
- const requested=Array.isArray(planned)&&planned.length?planned:spec.visualIntent?.archetypeCandidates
- const variants=Array.isArray(requested)&&requested.length?requested:(defaults[spec.role]??defaults.content)
- const items=spec.content?.bullets??[]
- const hasMetric=Boolean(metricDataset(items)||namedMetricTable(items))||items.some(rawItem=>{
-  const item=String(rawItem).replace(/[（(]\s*(?:S|SRC)\s*\d*\s*[）)]/gi,'').replace(/\[\s*(?:S|SRC)\s*\d+\s*\]/gi,'')
-  return /\d[\d,]*(?:\.\d+)?\s*(?:%|倍|万|亿|ms|秒|分|分钟|小时|MB|GB)/i.test(item)
-   || /(?:Accuracy|Precision|Recall|F1|MRR|nDCG|Hit@?\d*|准确率|召回率|精确率|完整率|支撑率|通过率)\D{0,10}\d/i.test(item)
-   || /\b0\.\d{2,}\b/.test(item)
- })
- const explanatory=spec.visualIntent?.contentRelation==='explanation'&&!['cover','agenda','section','questions'].includes(spec.role)
- const structural=['workflow','process','pipeline','three-stage','evidence-chain','timeline','next-steps','layered-architecture','claim-map','source-map','hub-spoke','before-after']
- return [...new Set([preferred,...learned,...variants,...(explanatory?['evidence-brief']:[])].filter(Boolean))]
-  .filter(variant=>!explanatory||!structural.includes(variant))
-  .filter(variant=>hasMetric||!['metric','metric-wall','chart-focus','comparison-bars','scorecard'].includes(variant)||variant===preferred).slice(0,5).concat(personalLayout)
-}
-
 async function assembleDeck(slides,output,{portable=true,strict=true}={}){
  const selected=[],finalScenes=[]
  for(const spec of slides){
@@ -120,7 +59,7 @@ async function assembleDeck(slides,output,{portable=true,strict=true}={}){
  await fs.writeFile(path.join(output,'scene-ir.json'),JSON.stringify({version:'scene-ir-v1',slides:finalScenes},null,2))
 }
 
-export async function main([command,input,output]=process.argv.slice(2)){
+export async function main([command,input,output,sceneRoot]=process.argv.slice(2)){
  const parsed=command==='pdf'?[]:JSON.parse(await fs.readFile(input,'utf8'))
  const slides=Array.isArray(parsed)?parsed:parsed?.slides
  if(command!=='pdf'&&!Array.isArray(slides))throw new Error('Input must be a slide array or a deck spec with a slides array')
@@ -185,7 +124,7 @@ export async function main([command,input,output]=process.argv.slice(2)){
   }else if(command==='assemble')await assembleDeck(slides,output)
   else if(command==='assemble-local')await assembleDeck(slides,output,{strict:false})
   else if(command==='assemble-bundle')await assembleDeck(slides,output,{portable:false})
-  else if(command==='pptx')await exportPptx(slides,output)
+  else if(command==='pptx')await exportPptx(slides,output,{sceneRoot:sceneRoot||process.env.YINGZHANG_SCENE_ROOT||null,reportPath:`${output.replace(/\.pptx$/i,'')}.export.json`,keepBrowser:true})
  else if(command==='pdf')await exportPdf(input,output)
  else throw new Error(`Unknown command ${command}`)
  }finally{await closeSceneBrowser()}

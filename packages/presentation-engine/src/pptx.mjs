@@ -3,6 +3,16 @@ import {sourceLabel} from './source-label.mjs'
 import pptxgen from 'pptxgenjs'
 import JSZip from 'jszip'
 import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import {slideHtml} from './author.mjs'
+import {captureScene,closeSceneBrowser} from './scene.mjs'
+import {hydrateAssets} from './assets.mjs'
+import {candidateVariants} from './candidates.mjs'
+import {matchesRenderStamp} from './render-input.mjs'
+import {chartModel,addNativeChart} from './charts.mjs'
+import {grammarFor} from './grammar.mjs'
+import {pptxMode,sceneExportIssues,planSceneSlide,applyScenePlan,patchSlideXml,patchChartXml} from './pptx-scene.mjs'
 import {metricDataset,namedMetricTable,transitionDataset,metricTokens as numbers} from './data.mjs'
 import {resolveComposition,contentLayout,editorialContent,sameStatement,tableFits} from './content.mjs'
 
@@ -52,32 +62,37 @@ function addBrandLogo(slide,spec){
  const logo=String(spec?.designSystem?.brand?.logoPath??'')
  if(logo)try{slide.addImage({path:logo,x:11.15,y:.46,w:1.15,h:.42,altText:brandLabel(spec)||'品牌标识'})}catch{}
 }
+export function speakerNotes(spec){
+ const intent=spec.speakerIntent??{},refs=sourceText(spec,true)
+ const assetSources=(spec.assetBindings??[]).filter(item=>item.provenance).map(item=>`- 视觉素材：${item.provenance}${item.license?' · 许可 '+item.license:''}${item.sourceUrl?' · '+item.sourceUrl:''}`)
+ return [
+  `本页结论：${spec.message??''}`,
+  intent.narration?`旁白：${intent.narration}`:'',
+  ...(intent.talkingPoints??[]).map(point=>`要点：${point}`),
+  ...(intent.sourceBoundaries??[]).map(point=>`适用边界：${point}`),
+  intent.transition?`过渡：${intent.transition}`:'',
+  '[Sources]',
+  refs?`- 内容来源：${refs}`:'- 内容来源：用户创作简报',
+  ...assetSources,
+  '[/Sources]',
+ ].filter(Boolean).join('\n')
+}
+function addSpeakerNotes(slide,spec){if(typeof slide.addNotes==='function')slide.addNotes(speakerNotes(spec))}
 function base(slide,spec,dark=false){
  slide.background={color:dark?C.deep:C.bg}
  addBrandLogo(slide,spec)
  const source=sourceText(spec)
  if(source)text(slide,`来源：${source}`,{x:.72,y:7.01,w:10.8,h:.2,fontSize:9,color:dark?'AEB7D4':C.muted})
  text(slide,String(spec.position).padStart(2,'0'),{x:12.05,y:7.0,w:.52,h:.2,fontSize:9,color:dark?'AEB7D4':C.muted,align:'right'})
- if(typeof slide.addNotes==='function'){
-  const intent=spec.speakerIntent??{},refs=sourceText(spec,true)
-  const assetSources=(spec.assetBindings??[]).filter(item=>item.provenance).map(item=>`- 视觉素材：${item.provenance}${item.license?' · 许可 '+item.license:''}${item.sourceUrl?' · '+item.sourceUrl:''}`)
-  const notes=[
-   `本页结论：${spec.message??''}`,
-   intent.narration?`旁白：${intent.narration}`:'',
-   ...(intent.talkingPoints??[]).map(point=>`要点：${point}`),
-   ...(intent.sourceBoundaries??[]).map(point=>`适用边界：${point}`),
-   intent.transition?`过渡：${intent.transition}`:'',
-   '[Sources]',
-   refs?`- 内容来源：${refs}`:'- 内容来源：用户创作简报',
-   ...assetSources,
-   '[/Sources]',
-  ].filter(Boolean)
-  slide.addNotes(notes.join('\n'))
- }
+ addSpeakerNotes(slide,spec)
 }
 function heading(slide,spec,{dark=false,title=displayTitle(spec),y=.48}={}){
+ // The legacy compiler honours the skill grammar's title scale and alignment.
+ const grammar=grammarFor(spec),size=grammar?.typeScale?Math.round(grammar.typeScale.title*35/52):35
+ const center=grammar?.titleStyle?.align==='center'
  text(slide,roleLabels[spec.role]??spec.role??'正文',{x:.72,y,w:2.2,h:.24,fontSize:11,bold:true,color:dark?C.mint:C.primary,charSpacing:1.4})
- text(slide,title,{x:.72,y:y+.46,w:11.65,h:.82,fontSize:35,bold:true,color:dark?C.white:C.ink,breakLine:true})
+ text(slide,title,{x:.72,y:y+.46,w:11.65,h:.82,fontSize:size,bold:true,color:dark?C.white:C.ink,breakLine:true,align:center?'center':'left',
+  ...(grammar?.titleStyle?.font==='serif'?{fontFace:'SimSun'}:{})})
 }
 function numberedItems(slide,items,x,y,w,{dark=false,size=16,gap=.62}={}){
  items.forEach((item,index)=>{
@@ -117,9 +132,13 @@ function chartOptions(dataset){
  }
 }
 function nativeMetricChart(slide,spec,items){
+ const model=chartModel(spec,items)
  const dataset=transitionDataset(items)||metricDataset(items)
- if(!dataset)return false
- slide.addChart(ChartType.bar,dataset.series,chartOptions(dataset))
+ // Trend, share, scatter, combo and waterfall shapes use the shared chart model;
+ // categorical comparisons keep the established legacy bar layout.
+ if(model&&!['column','bar'].includes(model.type))addNativeChart(slide,model,{x:.86,y:1.9,w:11.55,h:3.92},ChartType)
+ else if(dataset)slide.addChart(ChartType.bar,dataset.series,chartOptions(dataset))
+ else return false
  card(slide,2.05,5.92,9.25,.62,C.deep,C.deep,.1)
  text(slide,spec.message,{x:2.36,y:6.08,w:8.62,h:.28,fontSize:15,bold:true,color:C.mint,align:'center',breakLine:true})
  return true
@@ -437,7 +456,7 @@ function evidence(slide,spec){
 function data(slide,spec){
  if(['metric-wall','scorecard'].includes(spec.visualIntent?.selectedVariant)&&metricWall(slide,spec))return
  const items=spec.content?.bullets??[]
- if(!transitionDataset(items)&&!metricDataset(items)&&!nativeTableDataset(spec)){completeContent(slide,spec);return}
+ if(!transitionDataset(items)&&!metricDataset(items)&&!nativeTableDataset(spec)&&!chartModel(spec,items)){completeContent(slide,spec);return}
  base(slide,spec);heading(slide,spec)
  if(spec.visualIntent?.selectedVariant==='table-highlight'&&nativeTable(slide,spec))return
  if(nativeMetricChart(slide,spec,items))return
@@ -553,58 +572,143 @@ function evidenceBrief(slide,spec){
  })
 }
 
-async function removeDanglingPackageDeclarations(output){
- const buffer=await fs.readFile(output),zip=await JSZip.loadAsync(buffer)
- const typesFile=zip.file('[Content_Types].xml')
- if(!typesFile)return
- const declared=await typesFile.async('string')
- const normalized=declared.replace(
-  /<Override PartName="\/ppt\/slideMasters\/slideMaster(\d+)\.xml" ContentType="application\/vnd\.openxmlformats-officedocument\.presentationml\.slideMaster\+xml"\/>/g,
-  (entry,index)=>zip.file(`ppt/slideMasters/slideMaster${index}.xml`)?entry:'',
- )
- if(normalized===declared)return
- zip.file('[Content_Types].xml',normalized)
- await fs.writeFile(output,await zip.generateAsync({type:'nodebuffer',compression:'DEFLATE'}))
+function legacySlide(slide,spec){
+ if(spec.visualIntent?.selectedVariant==='personal-reference'){
+  const regions=referenceRegions(spec)
+  if(regions){
+   slide.background={color:C.bg}
+   for(const region of regions)text(slide,region.text,{x:region.x*13.333333,y:region.y*7.5,w:region.w*13.333333,h:region.h*7.5,fontSize:region.fontSize*.75,fontFace:region.fontFamily??font,bold:region.title,color:C.ink,margin:0,breakLine:false,valign:'top'})
+   slide.addNotes((spec.sourceRefs??[]).map(ref=>`${ref.document??''} ${ref.section??''}`).join(' / '))
+   return
+  }
+ }
+ if(resolveComposition(spec,spec.visualIntent?.selectedVariant)==='content-list'){completeContent(slide,spec);return}
+ if(resolveComposition(spec,spec.visualIntent?.selectedVariant)==='evidence-brief'){evidenceBrief(slide,spec);return}
+ const handler={cover,agenda,section,background,problem,method:(s,v)=>flow(s,v,false),architecture:(s,v)=>flow(s,v,true),evidence,data,comparison,insight,conclusion,questions}[spec.role]
+ const asset=boundImage(spec),media=boundMedia(spec)
+ const selectedVisual=selectedVariantVisual(spec),visual=selectedVisual??spec.visualIntent?.primaryVisual
+ if(media&&spec.role!=='cover'&&spec.role!=='questions')mediaStory(slide,spec)
+ else if(asset&&spec.role==='cover')coverWithImage(slide,spec)
+ else if(asset&&spec.role!=='questions')imageStory(slide,spec)
+ else if(spec.role==='cover')cover(slide,spec)
+ else if(selectedVisual==='typography')typographyStory(slide,spec)
+ else if(selectedVisual==='split')splitStory(slide,spec)
+ else if(selectedVisual==='cards')summaryGridPptx(slide,spec)
+ else if(selectedVisual==='chart')data(slide,spec)
+ else if(selectedVisual==='diagram')structuredDiagram(slide,spec)
+ else if(['agenda','section','background','problem','insight','conclusion','questions'].includes(spec.role)&&handler)handler(slide,spec)
+ else if(visual==='chart')data(slide,spec)
+ else if(visual==='typography')typographyStory(slide,spec)
+ else if(visual==='generated-image'&&spec.role!=='cover')typographyStory(slide,spec)
+ else if(handler)handler(slide,spec)
+ else if(visual==='diagram')flow(slide,spec,false)
+ else splitStory(slide,spec)
 }
 
-export async function exportPptx(slides,output){
+async function postProcessPackage(output,registry){
+ const buffer=await fs.readFile(output),zip=await JSZip.loadAsync(buffer)
+ let changed=false
+ const typesFile=zip.file('[Content_Types].xml')
+ if(typesFile){
+  const declared=await typesFile.async('string')
+  const normalized=declared.replace(
+   /<Override PartName="\/ppt\/slideMasters\/slideMaster(\d+)\.xml" ContentType="application\/vnd\.openxmlformats-officedocument\.presentationml\.slideMaster\+xml"\/>/g,
+   (entry,index)=>zip.file(`ppt/slideMasters/slideMaster${index}.xml`)?entry:'',
+  )
+  if(normalized!==declared){zip.file('[Content_Types].xml',normalized);changed=true}
+ }
+ {
+  for(const name of Object.keys(zip.files).filter(name=>/^ppt\/slides\/slide\d+\.xml$/.test(name))){
+   const xml=await zip.file(name).async('string'),patched=patchSlideXml(xml,registry)
+   if(patched!==xml){zip.file(name,patched);changed=true}
+  }
+ }
+ for(const [index,patches] of Object.entries(registry.chartPatches)){
+  const name=`ppt/charts/chart${index}.xml`,file=zip.file(name)
+  if(!file)continue
+  const xml=await file.async('string'),patched=patchChartXml(xml,patches)
+  if(patched!==xml){zip.file(name,patched);changed=true}
+ }
+ if(changed)await fs.writeFile(output,await zip.generateAsync({type:'nodebuffer',compression:'DEFLATE'}))
+}
+
+// Locate the measured scene of the selected HTML candidate. A stored scene is
+// only reused while its render stamp still matches the slide content.
+async function storedScene(spec,sceneRoot){
+ if(!sceneRoot)return null
+ const root=path.join(sceneRoot,'slides',String(spec.position))
+ let variant=spec.visualIntent?.selectedVariant
+ if(!variant){try{variant=JSON.parse(await fs.readFile(path.join(root,'current.json'),'utf8')).variant}catch{return null}}
+ if(!variant)return null
+ const safe=String(variant).replace(/[^a-z0-9_-]/gi,'-')
+ try{
+  const [scene,score]=await Promise.all([fs.readFile(path.join(root,`${safe}.scene.json`),'utf8'),fs.readFile(path.join(root,`${safe}.score.json`),'utf8')].map(read=>read.then(JSON.parse)))
+  if(!await matchesRenderStamp(score.renderStamp,spec))return null
+  return {scene,variant,source:'stored'}
+ }catch{return null}
+}
+
+export function sceneVariant(spec){
+ return spec.visualIntent?.selectedVariant||spec.layoutPlan?.recommendedVariant||candidateVariants(spec)[0]||'content-list'
+}
+
+async function capturedScene(spec,workdir){
+ const variant=sceneVariant(spec),hydrated=await hydrateAssets(spec)
+ if(hydrated.assetLoadErrors?.length)return null
+ const file=path.join(workdir,`${String(spec.position??'slide').replace(/[^a-z0-9_-]/gi,'-')}-${Date.now()}-${Math.random().toString(16).slice(2)}.html`)
+ await fs.writeFile(file,slideHtml(hydrated,variant))
+ return {scene:await captureScene(file,null),variant,source:'captured'}
+}
+
+export async function exportPptx(slides,output,options={}){
+ const mode=options.mode??pptxMode()
  applyDesignSystem(slides[0])
  const pptx=new pptxgen();pptx.layout='LAYOUT_WIDE';pptx.author='映章';pptx.subject='映章智能演示';pptx.company='映章';pptx.lang='zh-CN';pptx.theme={headFontFace:font,bodyFontFace:font,lang:'zh-CN'}
- for(const rawSpec of slides){
-  const spec=cleanAudienceSpec(rawSpec)
-  applyDesignSystem(spec)
-  const slide=pptx.addSlide()
-  if(spec.visualIntent?.selectedVariant==='personal-reference'){
-   const regions=referenceRegions(spec)
-   if(regions){
-    slide.background={color:C.bg}
-    for(const region of regions)text(slide,region.text,{x:region.x*13.333333,y:region.y*7.5,w:region.w*13.333333,h:region.h*7.5,fontSize:region.fontSize*.75,fontFace:region.fontFamily??font,bold:region.title,color:C.ink,margin:0,breakLine:false,valign:'top'})
-    slide.addNotes((spec.sourceRefs??[]).map(ref=>`${ref.document??''} ${ref.section??''}`).join(' / '))
-    continue
+ const registry={gradients:[],capped:0,chartPatches:{},chartCount:0}
+ const report={version:'pptx-export-v1',mode,slides:[]}
+ let workdir=null
+ try{
+  for(const rawSpec of slides){
+   const spec=cleanAudienceSpec(rawSpec)
+   applyDesignSystem(spec)
+   const slide=pptx.addSlide()
+   const addChart=slide.addChart.bind(slide)
+   slide.addChart=(...args)=>{registry.chartCount++;return addChart(...args)}
+   const entry={position:rawSpec.position,slideId:rawSpec.id??null,renderer:'legacy'}
+   if(mode==='scene'){
+    try{
+     let resolved=options.scenes?.[rawSpec.position]?{scene:options.scenes[rawSpec.position],variant:sceneVariant(rawSpec),source:'provided'}:await storedScene(rawSpec,options.sceneRoot)
+     if(!resolved&&options.capture!==false){
+      workdir??=await fs.mkdtemp(path.join(os.tmpdir(),'yingzhang-scene-'))
+      resolved=await capturedScene(rawSpec,workdir)
+     }
+     const issues=resolved?sceneExportIssues(resolved.scene,rawSpec):['scene-unavailable']
+     const plan=issues.length?null:planSceneSlide(resolved.scene,rawSpec,{font})
+     // An image the compiler cannot locate would silently drop evidence.
+     if(plan?.issues.includes('image-without-path'))issues.push('image-without-path')
+     if(!issues.length){
+      applyScenePlan(slide,plan,{ShapeType,ChartType,font,registry})
+      addSpeakerNotes(slide,spec)
+      Object.assign(entry,{renderer:'scene',variant:resolved.variant,sceneSource:resolved.source,objects:plan.stats,warnings:plan.issues})
+      report.slides.push(entry)
+      continue
+     }
+     entry.fallbackReason=issues.join(',')
+    }catch(error){entry.fallbackReason=`scene-error:${String(error?.message??error).slice(0,200)}`}
    }
+   legacySlide(slide,spec)
+   report.slides.push(entry)
   }
-  if(resolveComposition(spec,spec.visualIntent?.selectedVariant)==='content-list'){completeContent(slide,spec);continue}
-  if(resolveComposition(spec,spec.visualIntent?.selectedVariant)==='evidence-brief'){evidenceBrief(slide,spec);continue}
- const handler={cover,agenda,section,background,problem,method:(s,v)=>flow(s,v,false),architecture:(s,v)=>flow(s,v,true),evidence,data,comparison,insight,conclusion,questions}[spec.role]
-  const asset=boundImage(spec),media=boundMedia(spec)
-  const selectedVisual=selectedVariantVisual(spec),visual=selectedVisual??spec.visualIntent?.primaryVisual
-  if(media&&spec.role!=='cover'&&spec.role!=='questions')mediaStory(slide,spec)
-  else if(asset&&spec.role==='cover')coverWithImage(slide,spec)
-  else if(asset&&spec.role!=='questions')imageStory(slide,spec)
-  else if(spec.role==='cover')cover(slide,spec)
-  else if(selectedVisual==='typography')typographyStory(slide,spec)
-  else if(selectedVisual==='split')splitStory(slide,spec)
-  else if(selectedVisual==='cards')summaryGridPptx(slide,spec)
-  else if(selectedVisual==='chart')data(slide,spec)
-  else if(selectedVisual==='diagram')structuredDiagram(slide,spec)
-  else if(['agenda','section','background','problem','insight','conclusion','questions'].includes(spec.role)&&handler)handler(slide,spec)
-  else if(visual==='chart')data(slide,spec)
-  else if(visual==='typography')typographyStory(slide,spec)
-  else if(visual==='generated-image'&&spec.role!=='cover')typographyStory(slide,spec)
-  else if(handler)handler(slide,spec)
-  else if(visual==='diagram')flow(slide,spec,false)
-  else splitStory(slide,spec)
+ }finally{
+  if(workdir)await fs.rm(workdir,{recursive:true,force:true})
+  if(!options.keepBrowser)await closeSceneBrowser()
  }
  await pptx.writeFile({fileName:output})
- await removeDanglingPackageDeclarations(output)
+ await postProcessPackage(output,registry)
+ report.sceneSlides=report.slides.filter(item=>item.renderer==='scene').length
+ report.legacySlides=report.slides.length-report.sceneSlides
+ if(options.reportPath)await fs.writeFile(options.reportPath,JSON.stringify(report,null,2))
+ return report
 }
+
+export {pptxMode}

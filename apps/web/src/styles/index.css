@@ -1,0 +1,13 @@
+/* Entry point for global styles. Order: tokens → base → primitives → shell → features. */
+@import "./tokens.css";
+@import "./base.css";
+@import "./components.css";
+@import "./layout.css";
+@import "./features/login.css";
+@import "./features/create.css";
+@import "./features/projects.css";
+@import "./features/workspace.css";
+@import "./features/stage.css";
+@import "./features/quality.css";
+@import "./features/catalog.css";
+@import "./features/settings.css";

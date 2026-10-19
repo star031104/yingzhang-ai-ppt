@@ -1,0 +1,33 @@
+# 映章 YingZhang — local single-instance deployment.
+#   docker compose up -d --build
+#   open http://127.0.0.1:8000
+services:
+  yingzhang:
+    build:
+      context: .
+      args:
+        INSTALL_LIBREOFFICE: "${YINGZHANG_INSTALL_LIBREOFFICE:-false}"
+        INSTALL_FFMPEG: "true"
+        INSTALL_OCR: "${YINGZHANG_INSTALL_OCR:-false}"
+    image: yingzhang:local
+    # A stable hostname keeps the encrypted credential fallback readable across
+    # container re-creation; set YINGZHANG_VAULT_KEY for an explicit secret.
+    hostname: yingzhang
+    ports:
+      # Loopback only. Put an HTTPS reverse proxy with access control in front
+      # before exposing the service to a network.
+      - "127.0.0.1:${YINGZHANG_PORT:-8000}:8000"
+    environment:
+      YINGZHANG_VAULT_KEY: "${YINGZHANG_VAULT_KEY:-}"
+      YINGZHANG_LOCAL_ONLY_MODE: "${YINGZHANG_LOCAL_ONLY_MODE:-false}"
+      YINGZHANG_RENDER_CONCURRENCY: "${YINGZHANG_RENDER_CONCURRENCY:-2}"
+      YINGZHANG_MAX_CONCURRENT_JOBS: "${YINGZHANG_MAX_CONCURRENT_JOBS:-2}"
+    volumes:
+      - yingzhang-runtime:/app/runtime
+    # Chromium needs more than Docker's 64 MB default /dev/shm for large decks.
+    shm_size: "1gb"
+    init: true
+    restart: unless-stopped
+
+volumes:
+  yingzhang-runtime:

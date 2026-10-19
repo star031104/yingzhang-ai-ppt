@@ -20,6 +20,9 @@ export function JobPageProgress({ job }: { job: ProjectJob }) {
       <div className="page-job-summary">
         <b>逐页生成</b>
         <span>{ready}/{pages.length} 页完成{failed ? ` · ${failed} 页待重试` : ""}</span>
+        <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={pages.length} aria-valuenow={ready} aria-label="已完成页数">
+          <i style={{ width: `${(ready / pages.length) * 100}%` }} />
+        </div>
       </div>
       <div className="page-job-grid">
         {pages.map((page) => (
@@ -31,6 +34,7 @@ export function JobPageProgress({ job }: { job: ProjectJob }) {
             {page.status === "ready" && (
               <img src={jobPagePreviewUrl(job.id, page.slideId)} alt={`第 ${page.position} 页预览`} />
             )}
+            {page.status === "running" && <span className="page-job-shimmer" aria-hidden="true" />}
             <b>{String(page.position).padStart(2, "0")}</b>
             <span>{STATUS_LABEL[page.status]}</span>
           </div>
