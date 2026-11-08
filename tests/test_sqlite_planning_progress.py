@@ -34,7 +34,7 @@ def test_planning_does_not_lock_progress_writes_while_awaiting_model(client, mon
         return plan, {"returnedSlides": len(plan["slides"])}
 
     monkeypatch.setattr(
-        "app.api.workflow_routes.enhance_plan_with_routed_model", fake_enhance
+        "app.workflows.model_planning.enhance_plan_with_routed_model", fake_enhance
     )
     response = client.post(
         f"/api/v1/projects/{project['id']}/outline",

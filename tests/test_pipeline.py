@@ -218,6 +218,9 @@ def test_twenty_page_plan_is_chunked_and_malformed_batch_falls_back(client, monk
             })
         if "检查下面的大纲是否围绕中心命题递进" in prompt:
             return json.dumps({"status": "通过", "issues": [], "revisions": []})
+        if "上一次输出未通过结构校验" in prompt:
+            # The schema-aware repair turn also fails; the batch must fall back.
+            return '{"slides":[{"position":7'
         match = re.search(r"本次只规划第 (\d+) 到第 (\d+) 页", prompt)
         assert match, prompt
         start, end = map(int, match.groups())

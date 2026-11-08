@@ -4,3 +4,4 @@ export * from "./api/catalog";
 export * from "./api/regionEdit";
 export type * from "./api/types";
 export * from "./api/video";
+export * from "./api/presenter";

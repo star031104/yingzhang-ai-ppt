@@ -67,7 +67,11 @@ export function missingContent(scene,spec){
  const visible=normalizedText(scene.visibleText)
  const structured=new Set(scene.structuredContent??[])
  return (spec.content?.bullets??[]).flatMap((item,index)=>{
+  // Formulas render as MathML, whose glyph text differs from the LaTeX source, so a
+  // bullet with formulas is complete when every text part around them is visible.
+  const parts=String(item??'').split(/\$\$[^$]{1,400}\$\$/).map(normalizedText).filter(Boolean)
   const expected=normalizedText(item)
-  return !expected||visible.includes(expected)||structured.has(index)?[]:[{index,text:cleanText(item)}]
+  const shown=parts.length>1||/\$\$/.test(String(item??''))?parts.every(part=>visible.includes(part)):visible.includes(expected)
+  return !expected||shown||structured.has(index)?[]:[{index,text:cleanText(item)}]
  })
 }

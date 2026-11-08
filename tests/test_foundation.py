@@ -4,7 +4,13 @@ from app.api.workflow_routes import safe_upload_name
 
 
 def test_health(client):
-    assert client.get("/api/v1/health").json() == {"status": "ok", "phase": 1}
+    health = client.get("/api/v1/health").json()
+    assert health["status"] == "ok" and health["phase"] == 1
+    # Launchers match this against SHA-256 of the lower-cased project root.
+    import hashlib
+    from pathlib import Path
+    root = str(Path(__file__).resolve().parents[1]).lower()
+    assert health["instance"] == hashlib.sha256(root.encode("utf-8")).hexdigest().upper()
 
 
 def test_project_creates_recoverable_artifacts(client):

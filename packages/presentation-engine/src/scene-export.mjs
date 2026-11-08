@@ -178,6 +178,15 @@ export function collectExportLayer(){
       underline:/underline/.test(cs.textDecorationLine),pre})
     }else if(child.nodeType===Node.ELEMENT_NODE){
      if(child.tagName==='BR'){runs.push({text:'',lineBreak:true});continue}
+     if(child.hasAttribute&&child.hasAttribute('data-pptx-text')){
+      // Native formula: export the LaTeX source; the PPTX post-processor converts it to OMML.
+      const cs=getComputedStyle(child),range=document.createRange();range.selectNodeContents(child)
+      const clientRects=[...range.getClientRects()].filter(r=>r.width>0&&r.height>0)
+      if(clientRects.length){rects.push(...clientRects)
+       runs.push({text:child.getAttribute('data-pptx-text'),fontSize:px(cs.fontSize),fontWeight:Number(cs.fontWeight)||400,italic:false,
+        color:color(cs.color),fontFamily:cs.fontFamily,letterSpacing:0,underline:false,pre:false,math:true})}
+      continue
+     }
      if(child.tagName==='YZ-PSEUDO'&&!isInline(child))continue
      const cs=getComputedStyle(child)
      if(cs.display==='none'||cs.visibility==='hidden')continue

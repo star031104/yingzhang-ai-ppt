@@ -1,0 +1,71 @@
+/* Guided intake dialog, rehearsal panel and diagnostics tables. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg-overlay);
+}
+.intake-dialog {
+  width: min(720px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  display: grid;
+  gap: 18px;
+  box-shadow: var(--shadow-overlay);
+}
+.intake-steps {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+.intake-steps li {
+  flex: 1;
+  padding: 6px 0;
+  border-bottom: 3px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: 13px;
+  text-align: center;
+}
+.intake-steps li.active { border-color: var(--accent); color: var(--accent-text); font-weight: 700; }
+.intake-steps li.done { border-color: var(--accent-border); color: var(--text-secondary); }
+.intake-questions { display: grid; gap: 16px; }
+.intake-question { display: grid; gap: 6px; }
+.intake-multi { display: grid; gap: 6px; max-height: 220px; overflow: auto; }
+.intake-multi .check span { font-size: 13px; line-height: 1.45; }
+.intake-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+
+.rehearsal-panel { display: grid; gap: 14px; }
+.rehearsal-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rehearsal-head label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.rehearsal-head input { width: 72px; }
+.rehearsal-timeline { display: grid; gap: 4px; }
+.rehearsal-row {
+  display: grid;
+  grid-template-columns: 40px 56px 1fr 64px;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.rehearsal-row.current { background: var(--accent-soft); }
+.rehearsal-row .bar { height: 6px; border-radius: 3px; background: var(--accent); }
+.rehearsal-row.compress .bar { background: var(--warning); }
+.rehearsal-row small { color: var(--text-tertiary); }
+.rehearsal-timer { display: flex; align-items: baseline; gap: 12px; font-variant-numeric: tabular-nums; }
+.rehearsal-timer strong { font-size: 28px; }
+.rehearsal-timer.over strong { color: var(--danger-text); }
+.rehearsal-qa { display: grid; gap: 10px; margin: 0; padding-left: 18px; }
+.rehearsal-qa li p { margin: 2px 0; }
+.rehearsal-qa li small { color: var(--text-tertiary); }
+
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th, .data-table td { padding: 6px 8px; border-bottom: 1px solid var(--border-subtle); text-align: left; }
+.structured-output-panel { margin-top: 18px; }
+.link-button { padding: 0; border: 0; background: none; color: var(--text-primary); font: inherit; text-align: left; cursor: pointer; }
+.link-button:hover { color: var(--text-link); }

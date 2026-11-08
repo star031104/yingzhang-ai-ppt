@@ -18,7 +18,8 @@ if (-not $PublicUrl) {
 $base = "$($PublicUrl.TrimEnd('/'))/api/v1"
 
 $adminLine = Get-Content -LiteralPath (Join-Path $projectRoot ".env") |
-    Where-Object { $_ -like "SLIDEFORGE_PUBLIC_ADMIN_PASSWORD=*" } |
+    Where-Object { $_ -match "^(YINGZHANG|SLIDEFORGE)_PUBLIC_ADMIN_PASSWORD=" } |
+    Sort-Object { if ($_ -like "YINGZHANG_*") { 0 } else { 1 } } |
     Select-Object -First 1
 if (-not $adminLine) { throw "没有找到公网管理员测试密码。" }
 $password = $adminLine.Substring($adminLine.IndexOf("=") + 1)

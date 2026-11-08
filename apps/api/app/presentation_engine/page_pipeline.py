@@ -7,7 +7,16 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from app.presentation_engine.page_repair import (
+    PageInspector,
+    diagnose,
+    page_snapshot,
+    plan_patch,
+    summarize_repair,
+    vision_patch_codes,
+)
 from app.presentation_engine.service import PresentationEngine
+from app.presentation_intelligence.style_contract import continuity_score, style_summary
 from app.validation.render_safety import safe_render_candidate
 
 PageEventHandler = Callable[[dict[str, Any]], Awaitable[None]]
@@ -57,6 +66,7 @@ def _variant_family(variant: str) -> str:
         "split": "split",
         "statement": "typography",
         "cards": "cards",
+        "creative-poster": "poster",
         "figure-wide": "image-wide",
         "figure-analysis": "image-analysis",
         "figure-focus": "image-focus",
@@ -122,6 +132,11 @@ def select_deck_variants(slides: list[dict], output: Path) -> list[dict[str, Any
     family_counts: dict[str, int] = {}
     previous_family: str | None = None
     selections: list[dict[str, Any]] = []
+    # Markov-style continuity: each page is scored against the previous page's
+    # measured style summary and the deck's style contract.
+    previous_style: dict[str, Any] | None = None
+    dark_content_pages = 0
+    content_pages_seen = 0
 
     for slide in sorted(slides, key=lambda item: int(item["position"])):
         root = output / "slides" / str(slide["position"])
@@ -138,6 +153,16 @@ def select_deck_variants(slides: list[dict], output: Path) -> list[dict[str, Any
             )
             score["variantFamily"] = _variant_family(effective)
             score["overall"] = _recompute_overall(score)
+            contract = (slide.get("designSystem") or {}).get("styleContract")
+            if contract:
+                summary = style_summary(root / f"{variant}.png", score)
+                continuity, reasons = continuity_score(
+                    summary, previous_style, contract, slide.get("role"),
+                    dark_content_pages, content_pages_seen,
+                )
+                score["styleSummary"] = summary
+                score["styleContinuity"] = continuity
+                score["styleContinuityIssues"] = reasons
             score_path.write_text(
                 json.dumps(score, ensure_ascii=False, indent=2), encoding="utf-8"
             )
@@ -181,6 +206,18 @@ def select_deck_variants(slides: list[dict], output: Path) -> list[dict[str, Any
             if spacious:
                 chosen = max([chosen, *spacious], key=lambda item: item["score"].get("whitespace", 0))
 
+        if not protected and "styleContinuity" in chosen["score"] and chosen["score"]["styleContinuity"] < 80:
+            smoother = [
+                item for item in candidates
+                if _safe_candidate(item["score"])
+                and item["score"].get("styleContinuity", 0) >= chosen["score"]["styleContinuity"] + 15
+                and int(item["score"].get("overall", 0)) >= int(chosen["score"].get("overall", 0)) - 6
+            ]
+            if smoother:
+                replacement = max(smoother, key=lambda item: (item["score"]["styleContinuity"], item["score"].get("overall", 0)))
+                replacement["score"]["styleSwapFrom"] = chosen["variant"]
+                chosen = replacement
+
         intent["selectedVariant"] = chosen["variant"]
         if intent.get("variantSelectionSource") not in {"user", "critic"}:
             intent["variantSelectionSource"] = "auto"
@@ -198,6 +235,14 @@ def select_deck_variants(slides: list[dict], output: Path) -> list[dict[str, Any
         variant_counts[effective] = variant_counts.get(effective, 0) + 1
         family_counts[family] = family_counts.get(family, 0) + 1
         previous_family = family
+        if "styleSummary" in chosen["score"]:
+            summary = chosen["score"]["styleSummary"]
+            previous_style = {**summary, "role": slide.get("role")}
+            if slide.get("role") not in {"cover", "agenda", "section", "questions"}:
+                content_pages_seen += 1
+                contract = (slide.get("designSystem") or {}).get("styleContract") or {}
+                if (summary.get("darkArea") or 0) > contract.get("maxContentDarkArea", 1):
+                    dark_content_pages += 1
         selections.append({"slideId": slide["id"], **chosen})
     return selections
 
@@ -210,8 +255,15 @@ async def render_deck_pages(
     concurrency: int = 2,
     on_event: PageEventHandler | None = None,
     is_cancelled: CancellationCheck | None = None,
+    repair_rounds: int = 0,
+    inspector: PageInspector | None = None,
 ) -> dict[str, Any]:
-    """Render pages independently, promote successful artifacts, then assemble once."""
+    """Render pages independently, promote successful artifacts, then assemble once.
+
+    With ``repair_rounds > 0`` every page runs a bounded render -> check -> patch
+    loop (see ``page_repair``). The slide dict is updated in place with the
+    patched spec and a ``renderRepair`` record so callers can persist both.
+    """
     execution_id = uuid.uuid4().hex
     work_root = output.parent / "page-jobs" / execution_id
     work_root.mkdir(parents=True, exist_ok=True)
@@ -234,7 +286,7 @@ async def render_deck_pages(
             ]
             counts = {
                 name: sum(1 for item in states.values() if item["status"] == name)
-                for name in ("pending", "running", "ready", "failed", "cancelled")
+                for name in ("pending", "running", "repairing", "ready", "failed", "cancelled")
             }
         if on_event:
             await on_event({**state, "pages": snapshot, "counts": counts, "total": len(slides)})
@@ -250,10 +302,42 @@ async def render_deck_pages(
             await emit(slide, "running")
             page_output = work_root / f"{int(slide['position']):03d}-{slide['id']}" / "rendered"
             try:
-                await asyncio.to_thread(engine.run, "build", [slide], page_output)
                 source = page_output / "slides" / str(slide["position"])
-                if not (source / "current.json").is_file():
-                    raise RuntimeError("页面渲染未产生可用候选")
+                history: list[dict[str, Any]] = []
+                while True:
+                    await asyncio.to_thread(engine.run, "build", [slide], page_output)
+                    if not (source / "current.json").is_file():
+                        raise RuntimeError("页面渲染未产生可用候选")
+                    if repair_rounds <= 0:
+                        break
+                    snapshot = page_snapshot(source)
+                    codes = diagnose(snapshot)
+                    vision_issues: list[str] = []
+                    if not codes and inspector and snapshot.get("imagePath") and not history:
+                        try:
+                            vision_issues = await inspector(slide, snapshot)
+                        except Exception:  # noqa: BLE001 - optional critic never fails a page
+                            vision_issues = []
+                        codes = vision_patch_codes(vision_issues)
+                    if not codes or len(history) >= repair_rounds:
+                        break
+                    if is_cancelled and is_cancelled():
+                        break
+                    patched, actions = plan_patch(slide, codes, snapshot, len(history) + 1)
+                    if not actions:
+                        break
+                    history.append({
+                        "round": len(history) + 1,
+                        "codes": codes,
+                        "visionIssues": vision_issues,
+                        "actions": actions,
+                        "selectedVariant": snapshot.get("selectedVariant"),
+                    })
+                    slide.clear()
+                    slide.update(patched)
+                    await emit(slide, "repairing", round=len(history), codes=codes)
+                if repair_rounds > 0 and history:
+                    slide["renderRepair"] = summarize_repair(history, page_snapshot(source))
                 target = output / "slides" / str(slide["position"])
                 from app.personalization.runtime import assert_current, lock
                 with lock:

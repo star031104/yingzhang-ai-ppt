@@ -38,6 +38,9 @@ export type ProposalIssue = {
 export type SlideSpec = {
   proposalIssues?: ProposalIssue[];
   imageGeneration?: { status: string; message?: string };
+  creativePage?: { kind: string; editable: string; notice: string; provenance?: string };
+  renderRepair?: { rounds: number; final: "pass" | "needs-review"; history: { round: number; codes: string[]; actions: { action: string; count?: number }[] }[] };
+  contentLocked?: boolean;
   id: string;
   position: number;
   revision: number;
@@ -46,7 +49,7 @@ export type SlideSpec = {
   content: { title: string; bullets: string[] };
   visualIntent?: { primaryVisual?: string; selectedVariant?: string; [key: string]: unknown };
   generationState?: {
-    status?: "pending" | "running" | "ready" | "failed" | "cancelled";
+    status?: "pending" | "running" | "repairing" | "ready" | "failed" | "cancelled";
     error?: string;
     candidateCount?: number;
   };
@@ -270,8 +273,9 @@ export type ProjectJob = {
 export type PageGenerationState = {
   slideId: string;
   position: number;
-  status: "pending" | "running" | "ready" | "failed" | "cancelled";
+  status: "pending" | "running" | "repairing" | "ready" | "failed" | "cancelled";
   error?: string;
+  round?: number;
   candidateCount?: number;
 };
 
@@ -297,7 +301,7 @@ export type ProjectStorageReport = {
   groups: Record<string, { bytes: number; files: number }>;
 };
 
-export type EvaluationKind = "ppteval" | "quiz" | "render";
+export type EvaluationKind = "ppteval" | "quiz" | "render" | "faithfulness" | "drift";
 
 export type PptevalDimensionScore = { score: number; rationale: string; source: string; suggestions?: string[] };
 
@@ -346,6 +350,33 @@ export type ResearchEvaluationRun = {
     content?: number; design?: number; coherence?: number; overall?: number; pptevalMode?: string;
     retention?: number | null; detailRetention?: number | null; conceptRetention?: number | null; quizStatus?: string;
     renderStatus?: string; renderErrors?: number; renderWarnings?: number; renderScore?: number | null;
+    faithfulness?: number | null; strictFaithfulness?: number | null; figureClaimAlignment?: number | null;
+    unsupportedClaims?: number; editTurns?: number; driftRate?: number | null; editPersistence?: number | null;
+  };
+  faithfulness?: {
+    status: string;
+    mode: string;
+    claims: number;
+    counts?: { supported: number; partial: number; unsupported: number };
+    faithfulness?: number | null;
+    strictFaithfulness?: number | null;
+    figureClaimAlignment?: number | null;
+    unsupported: { position: number; text: string; missingNumbers: string[] }[];
+    slides: {
+      position: number;
+      title: string;
+      score: number | null;
+      claims: { text: string; verdict: "supported" | "partial" | "unsupported"; missingNumbers?: string[]; droppedQualifiers?: string[]; source?: { document: string; section: string; page?: number | null; excerpt: string } | null }[];
+    }[];
+  };
+  drift?: {
+    status: string;
+    turns: number;
+    driftedTurns: number;
+    driftRate: number | null;
+    persistence: number | null;
+    overwritten: { slideId: string; position?: number; kind: "copy" | "selection"; by: string }[];
+    details: { slideId: string; position?: number; reason: string; outOfScope: string[] }[];
   };
   ppteval?: {
     mode: string;

@@ -44,9 +44,50 @@ $mutex = New-Object System.Threading.Mutex($false, "Local\YingzhangLauncher$key"
 $acquired = $false
 
 function Test-OurServer($processId) {
-    $entry = Get-CimInstance Win32_Process -Filter "ProcessId=$processId" -ErrorAction SilentlyContinue
-    return $entry -and $entry.CommandLine -like '*uvicorn*app.main:app*' -and
-        $entry.CommandLine.Contains($appDirectory) -and $entry.CommandLine -match "--port\s+$Port(\s|$)"
+    # The listening socket can belong to the interpreter that the venv python.exe
+    # redirector spawned, whose command line Windows may report differently. Walk up
+    # a few parents and accept either our uvicorn command or our worker script.
+    $worker = Join-Path $PSScriptRoot 'run-local-server.ps1'
+    $current = $processId
+    for ($depth = 0; $depth -lt 4 -and $current; $depth++) {
+        $entry = Get-CimInstance Win32_Process -Filter "ProcessId=$current" -ErrorAction SilentlyContinue
+        if (-not $entry) { return $false }
+        $line = [string]$entry.CommandLine
+        if ($line -like '*uvicorn*app.main:app*' -and $line.Contains($appDirectory) -and $line -match "--port\s+$Port(\s|$)") { return $true }
+        if ($line.Contains($worker) -and $line -match "-Port\s+$Port(\s|$)") { return $true }
+        $current = $entry.ParentProcessId
+    }
+    return $false
+}
+
+function Get-PortListeners {
+    # Some Windows installs report listening sockets with owner PID 0 and return nothing
+    # from Get-NetTCPConnection, so only use these results to know the port is taken.
+    $found = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+        ForEach-Object { [pscustomobject]@{ OwningProcess = [int]$_.OwningProcess } })
+    if ($found.Count) { return $found }
+    $pattern = "^\s*TCP\s+\S+:$Port\s+\S+\s+LISTENING\s+(\d+)\s*$"
+    return @(netstat.exe -ano -p TCP 2>$null | ForEach-Object {
+        if ($_ -match $pattern) { [pscustomobject]@{ OwningProcess = [int]$Matches[1] } }
+    })
+}
+
+function Get-OurServerProcess {
+    # Find our uvicorn by command line instead of by socket owner.
+    return @(Get-CimInstance Win32_Process -Filter "Name LIKE 'python%'" -ErrorAction SilentlyContinue | Where-Object {
+        $line = [string]$_.CommandLine
+        $line -like '*uvicorn*app.main:app*' -and $line.Contains($appDirectory) -and $line -match "--port\s+$Port(\s|$)"
+    })
+}
+
+function Test-OurHealth {
+    # Our server answers /health with a hash of this project path (same as $key below).
+    try { $health = Invoke-RestMethod "$url/api/v1/health" -TimeoutSec 3 } catch { return $false }
+    if ($health.status -ne 'ok') { return $false }
+    if ($health.instance -and $health.instance -eq $key) { return $true }
+    # Older servers lack the field, and a junction/OneDrive path can change the hash:
+    # fall back to finding our uvicorn by its command line.
+    return [bool](Get-OurServerProcess)
 }
 
 function Open-Website {
@@ -58,13 +99,11 @@ function Open-Website {
 try {
     try { $acquired = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $acquired = $true }
     if (-not $acquired) { throw 'Another launcher is preparing this project. Please wait for it to finish.' }
-    $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    $listener = Get-PortListeners | Select-Object -First 1
     if ($listener) {
-        if (-not (Test-OurServer $listener.OwningProcess)) {
-            throw "Port $Port is used by another service. Close it or run this script with -Port 8001."
+        if (-not (Test-OurHealth)) {
+            throw "Port $Port is used by another service (or an unhealthy YingZhang server). Close it or run this script with -Port 8001."
         }
-        $health = Invoke-RestMethod "$url/api/v1/health" -TimeoutSec 5
-        if ($health.status -ne 'ok') { throw 'The existing server is not healthy. Check its logs.' }
         Open-Website
         exit 0
     }
@@ -119,8 +158,8 @@ try {
     $stdout = Join-Path $launchRoot "server-$Port.log"
     $stderr = Join-Path $launchRoot "server-$Port-error.log"
     $arguments = '-m uvicorn app.main:app --app-dir "{0}" --host 127.0.0.1 --port {1}' -f $appDirectory, $Port
-    $env:SLIDEFORGE_PUBLIC_TEST_MODE = 'false'
-    $env:SLIDEFORGE_PRIVATE_ACCOUNTS_MODE = 'false'
+    $env:YINGZHANG_PUBLIC_TEST_MODE = 'false'
+    $env:YINGZHANG_PRIVATE_ACCOUNTS_MODE = 'false'
     $worker = Join-Path $PSScriptRoot 'run-local-server.ps1'
     $command = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -PythonPath "{1}" -Port {2} -NodeDirectory "{3}"' -f $worker, $pythonPath, $Port, (Split-Path -Parent $nodePath)
     $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
@@ -130,15 +169,10 @@ try {
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
         Start-Sleep -Milliseconds 500
         if (-not (Get-Process -Id $created.ProcessId -ErrorAction SilentlyContinue)) { break }
-        try {
-            $health = Invoke-RestMethod "$url/api/v1/health" -TimeoutSec 2
-            $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($health.status -eq 'ok' -and $listener -and (Test-OurServer $listener.OwningProcess)) { $ready = $true; break }
-        } catch { }
+        if (Test-OurHealth) { $ready = $true; break }
     }
     if (-not $ready) {
-        $failedListener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($failedListener -and (Test-OurServer $failedListener.OwningProcess)) { Stop-Process -Id $failedListener.OwningProcess }
+        Get-OurServerProcess | ForEach-Object { Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue }
         throw "Server startup failed. Read $stderr"
     }
     @{ processId = $listener.OwningProcess; port = $Port; url = $url; projectRoot = $projectRoot } |

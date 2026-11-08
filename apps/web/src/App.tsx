@@ -1,7 +1,10 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  compileGuidedIntake,
   createProject,
+  getGuidedIntake,
+  startJobFromRequest,
   getModels,
   getProjects,
   getProviders,
@@ -21,7 +24,8 @@ import { ModelsPage } from "./features/models/ModelsPage";
 import { ProjectEditor } from "./features/project/ProjectEditor";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import { SkillsPage } from "./features/skills/SkillsPage";
-import type { Project, ProfessionalBrief, PublicSession } from "./api";
+import type { GuidedIntake, PlanRequestPayload, Project, ProfessionalBrief, ProjectJob, PublicSession } from "./api";
+import { GuidedIntakeDialog } from "./features/create/GuidedIntakeDialog";
 import { PersonalizationPage, getPersonalProfiles } from "./features/personalization/PersonalizationPage";
 import { usePreferences, useResolvedTheme } from "./store/preferences";
 import "./styles/index.css";
@@ -59,6 +63,7 @@ export function App({
     [toast, setToast] = useState(""),
     [busy, setBusy] = useState(false),
     [projectId, setProjectId] = useState(""),
+    [guide, setGuide] = useState<{ projectId: string; intake: GuidedIntake; base: PlanRequestPayload } | null>(null),
     [activeProjectId, setActiveProjectId] = useState(initialRoute.projectId);
   const { sidebarCollapsed, toggleSidebar, setTheme } = usePreferences();
   const resolvedTheme = useResolvedTheme();
@@ -99,6 +104,30 @@ export function App({
       } else {
         setToast("正在根据主题与要求整理创作简报…");
       }
+      if (data.get("guided")) {
+        const baseRequest: PlanRequestPayload = {
+          title: String(data.get("title")),
+          instructions: String(data.get("instructions") || ""),
+          preset: String(data.get("preset")),
+          slide_count: Number(data.get("slides")),
+          skill_ids: data.getAll("skills").map(String).filter(Boolean),
+          image_mode: (data.get("creativePages") ? "creative" : data.get("imageMode") === "auto" ? "auto" : "off"),
+          audience: String(data.get("audience") || ""),
+          objective: String(data.get("objective") || ""),
+          brand_name: String(data.get("brandName") || ""),
+          tone: String(data.get("tone") || "auto"),
+          duration_minutes: Number(data.get("durationMinutes")) || null,
+        };
+        setToast("正在根据材料准备引导问题…");
+        const intake = await getGuidedIntake(project.id, {
+          title: baseRequest.title, instructions: baseRequest.instructions, preset: baseRequest.preset,
+          slide_count: baseRequest.slide_count, duration_minutes: baseRequest.duration_minutes,
+          audience: baseRequest.audience, objective: baseRequest.objective, tone: baseRequest.tone, brand_name: baseRequest.brand_name,
+        });
+        setGuide({ projectId: project.id, intake, base: baseRequest });
+        setToast("请确认引导问题，确认后开始生成");
+        return;
+      }
       setToast("正在自动规划并生成完整演示…");
       const completed = await waitForProjectJob(
         await startFullGenerationJob(
@@ -108,7 +137,7 @@ export function App({
           String(data.get("preset")),
           Number(data.get("slides")),
           data.getAll("skills").map(String).filter(Boolean),
-          data.get("imageMode") === "auto" ? "auto" : "off",
+          (data.get("creativePages") ? "creative" : data.get("imageMode") === "auto" ? "auto" : "off"),
           {
             profileId: String(data.get("personalProfile") || ""),
             profileRevision: personalProfiles.data?.profiles.find(item => item.id === data.get("personalProfile"))?.revision,
@@ -129,6 +158,26 @@ export function App({
       qc.invalidateQueries({ queryKey: ["projects"] });
       setActiveProjectId(project.id);
       navigate("project", project.id);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "生成失败，请稍后重试");
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function confirmGuide(answers: Record<string, unknown>) {
+    if (!guide) return;
+    setBusy(true);
+    try {
+      setToast("正在整理引导答案…");
+      const request = await compileGuidedIntake(guide.projectId, guide.base, answers, guide.intake);
+      setGuide(null);
+      setToast(request.approval_mode ? "正在规划大纲，完成后请确认大纲与样张…" : "正在自动规划并生成完整演示…");
+      await waitForProjectJob(await startJobFromRequest(guide.projectId, request), (job: ProjectJob) => {
+        setToast(`${job.checkpoint.label || "后台正在生成"}（${Math.max(1, Math.round(job.progress * 100))}%）`);
+      });
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      setActiveProjectId(guide.projectId);
+      navigate("project", guide.projectId);
     } catch (error) {
       setToast(error instanceof Error ? error.message : "生成失败，请稍后重试");
     } finally {
@@ -232,6 +281,14 @@ export function App({
               projectId={projectId}
               skills={skills.data ?? []}
               personalProfiles={session.publicMode ? [] : personalProfiles.data?.profiles ?? []}
+            />
+          )}
+          {view === "create" && guide && (
+            <GuidedIntakeDialog
+              intake={guide.intake}
+              busy={busy}
+              onConfirm={confirmGuide}
+              onCancel={() => { setGuide(null); setToast("已取消引导，项目和材料已保存，可在项目中继续生成"); }}
             />
           )}
           {view === "projects" && (

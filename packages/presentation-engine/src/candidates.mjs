@@ -18,7 +18,11 @@ export function candidateVariants(spec){
  const media=(spec.assetBindings??[]).find(item=>item.path&&['licensed-video','licensed-audio'].includes(item.type))
  if(media)return [...new Set([preferred,'media-focus'].filter(Boolean))]
  if(asset){
-  if(asset.type==='generated-image')return [...new Set([preferred,'image-story'].filter(Boolean))]
+  if(asset.type==='generated-image'){
+   // Creative poster only for navigation pages; the role's own layout stays as a safe fallback.
+   if(spec.visualIntent?.creativePoster&&['cover','section','questions'].includes(spec.role))return [...new Set([preferred,'creative-poster',(defaults[spec.role]??defaults.content)[0]].filter(Boolean))]
+   return [...new Set([preferred,'image-story'].filter(Boolean))]
+  }
   const requested=spec.visualIntent?.archetypeCandidates
   const variants=Array.isArray(requested)&&requested.length?requested:['figure-wide','figure-analysis','image-story']
   return [...new Set([preferred,...learned,...variants].filter(Boolean))].slice(0,5)

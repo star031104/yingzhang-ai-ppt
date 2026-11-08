@@ -7,6 +7,8 @@ const KIND_LABELS: Record<EvaluationKind, string> = {
   ppteval: "三维评分（PPTEval）",
   quiz: "信息保留测验",
   render: "PPTX 实际页面复核",
+  faithfulness: "逐条主张回查原文",
+  drift: "多轮编辑漂移",
 };
 const DIMENSIONS = [
   ["content", "内容"],
@@ -36,6 +38,28 @@ function collectIssues(run: ResearchEvaluationRun): PageIssue[] {
       issues.push({ position: slide.position, slideId: slide.slideId, dimension: issue.dimension, message: issue.message, suggestion: issue.suggestion });
     }
   }
+  for (const slide of run.faithfulness?.slides ?? []) {
+    for (const claim of slide.claims) {
+      if (claim.verdict === "supported") continue;
+      const missing = claim.missingNumbers?.length ? `原文缺少 ${claim.missingNumbers.join("、")}` : "";
+      const dropped = claim.droppedQualifiers?.length ? `遗漏限定条件「${claim.droppedQualifiers.join("、")}」` : "";
+      issues.push({
+        position: slide.position,
+        dimension: "faithfulness",
+        message: `${claim.verdict === "unsupported" ? "找不到原文依据" : "仅部分有依据"}：${claim.text}`,
+        suggestion: [missing, dropped, claim.source ? `最接近的原文：${claim.source.excerpt}` : ""].filter(Boolean).join("；"),
+      });
+    }
+  }
+  for (const item of run.drift?.overwritten ?? []) {
+    issues.push({
+      position: item.position ?? 0,
+      slideId: item.slideId,
+      dimension: "drift",
+      message: item.kind === "copy" ? "人工修改的文案被后续自动步骤覆盖" : "人工选择的版式被后续自动步骤替换",
+      suggestion: `覆盖来源：${item.by}`,
+    });
+  }
   for (const page of run.render?.pages ?? []) {
     for (const issue of page.issues) {
       issues.push({ position: page.page, slideId: page.slideId, dimension: "render", message: issue.message, suggestion: issue.suggestion });
@@ -44,7 +68,8 @@ function collectIssues(run: ResearchEvaluationRun): PageIssue[] {
   return issues.sort((left, right) => left.position - right.position);
 }
 
-const DIMENSION_TAGS: Record<string, string> = { content: "内容", design: "设计", coherence: "连贯", render: "实际页面" };
+const DIMENSION_TAGS: Record<string, string> = { content: "内容", design: "设计", coherence: "连贯", render: "实际页面", faithfulness: "出处", drift: "编辑漂移" };
+const percent = (value?: number | null) => (value === null || value === undefined ? "—" : `${Math.round(value * 100)}%`);
 
 export function EvaluationPanel({
   projectId,
@@ -183,6 +208,31 @@ export function EvaluationPanel({
             </>
           ) : (
             <p className="eval-note">{quiz.message || "未生成测验题目"}</p>
+          )}
+        </div>
+      )}
+
+      {(run?.faithfulness || run?.drift) && (
+        <div className="eval-quiz-summary eval-faithfulness">
+          {run.faithfulness?.status === "completed" && (
+            <>
+              <span><b>{percent(run.faithfulness.faithfulness)}</b>主张有出处</span>
+              <span><b>{percent(run.faithfulness.strictFaithfulness)}</b>完全一致</span>
+              {run.faithfulness.figureClaimAlignment !== null && run.faithfulness.figureClaimAlignment !== undefined && (
+                <span><b>{percent(run.faithfulness.figureClaimAlignment)}</b>图文对齐</span>
+              )}
+              <small>{run.faithfulness.claims} 条主张 · {run.faithfulness.mode === "rules+judge" ? "规则回查 + 模型复核" : "规则回查"}</small>
+            </>
+          )}
+          {run.faithfulness?.status === "no-sources" && <small>没有上传材料，无法回查出处</small>}
+          {run.drift && (
+            run.drift.turns ? (
+              <>
+                <span><b>{percent(run.drift.driftRate)}</b>越界修改</span>
+                <span><b>{percent(run.drift.persistence)}</b>人工决定保留</span>
+                <small>{run.drift.turns} 轮人工编辑</small>
+              </>
+            ) : <small>尚无人工编辑记录</small>
           )}
         </div>
       )}

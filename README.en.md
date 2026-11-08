@@ -44,10 +44,10 @@ YingZhang turns presentation production into a **traceable, checkable, resumable
 
 ## Capabilities
 
-- **Material understanding** — PDF, DOCX, XLSX/CSV, PPTX, Markdown, HTML and images; keeps headings, table cells, units, captions and source locations; BM25 plus optional embeddings fused with RRF; optional local Tesseract OCR.
-- **Planning and generation** — narrative planning from audience, objective, duration and tone; 15 presentation contracts; per-slide role, claim, evidence, text budget and object limits; model proposals validated against a number whitelist, duplicate titles and slide order; 9 visual skills with a `tokens.json` design grammar.
-- **Editing and review** — side-by-side candidates with locked human choices, conversational object edits, **box-select region edits**, single-slide regeneration, versions, review notes, approvals and publish snapshots, plus a local assistant that learns from reference decks and confirmed edits.
-- **Delivery** — HTML, PDF and **scene-driven native PPTX**; 8 native chart types (bar, column, line, area, doughnut, scatter, combo, waterfall); reference-deck layout library and corporate master filling; transitions and entrance animation; **narrated MP4 + SRT** from speaker notes.
+- **Material understanding** — PDF, DOCX, XLSX/CSV, PPTX, Markdown, HTML and images; keeps headings, table cells, units, captions and source locations; BM25 plus optional embeddings fused with RRF; optional local Tesseract OCR or local document-parsing models (MinerU, PaddleOCR-VL) for scans, formulas and complex tables; a card → facts → chunks knowledge base with heading-tree score propagation.
+- **Planning and generation** — narrative planning from audience, objective, duration and tone; 15 presentation contracts; per-slide role, claim, evidence, text budget and object limits; model proposals validated against a number whitelist, duplicate titles and slide order; 9 visual skills with a `tokens.json` design grammar; optional **guided intake** (strategy → substance → structure → design → build) with answers pre-filled from the materials; strict JSON-schema model output with one schema-aware repair turn and per-model reliability stats.
+- **Editing and review** — side-by-side candidates with locked human choices, conversational object edits, **box-select region edits**, single-slide regeneration, versions, review notes, approvals and publish snapshots, plus a local assistant that learns from reference decks and confirmed edits; a bounded per-page render → check → patch loop and a deck-wide style contract.
+- **Delivery** — HTML, PDF and **scene-driven native PPTX**; 8 native chart types (bar, column, line, area, doughnut, scatter, combo, waterfall); reference-deck layout library and corporate master filling; transitions and entrance animation; **narrated MP4 + SRT** from speaker notes; `$$LaTeX$$` formulas as MathML in HTML and **native editable PowerPoint equations**; optional poster-style creative backgrounds for cover/section/Q&A pages; a **rehearsal mode** with per-slide time budgets and audience questions answered only from the sources.
 
 ## How it works
 
@@ -105,14 +105,18 @@ App at `http://127.0.0.1:8000`, API docs at `/docs`, health check at `/api/v1/he
 
 | Check | Result |
 | --- | --- |
-| Python tests (API, workflows, parsing, MCP, video) | 300 passed |
-| Presentation engine tests | 61 passed |
-| Web component tests | 25 passed |
+| Python tests (API, workflows, parsing, evaluation, MCP, video) | <!-- stats:python -->350<!-- /stats --> passed |
+| Presentation engine tests | <!-- stats:engine -->63<!-- /stats --> passed |
+| Web component tests | <!-- stats:web -->27<!-- /stats --> passed |
 | Ruff · production build · benchmark gate | passing |
-| PPTX cross-format fidelity (LibreOffice render vs HTML screenshot, mean of four benchmark families) | **98.7 – 99.5** (legacy exporter 81.6 – 86.9) |
+| PPTX cross-format fidelity (LibreOffice render vs HTML screenshot, mean of four benchmark families) | **99.4 – 99.6** (open-source dom-to-pptx 96.2 – 97.3, legacy exporter 81.7 – 87.2) |
+| Claim-level source faithfulness on the benchmark decks | 1.00 |
+| Quality-gate perturbation suite (13 injected defects caught) | 1.00 |
+| Reference-template benchmark (synthetic corporate master) | passing |
 
 - **PPTEval-style scores** (content / design / coherence, 1–5) and **quiz fidelity** (answering source questions from slide text only).
 - **Render review** compares each exported slide, rendered through LibreOffice, with the selected HTML candidate.
+- **Faithfulness** looks up every audience-visible claim in the sources; numbers, units and qualifiers must match. **Edit drift** replays version history to show whether edits stayed in scope and whether human decisions survived later automation. **Perturbation tests** prove that each quality gate fires on the defect it targets.
 - Run via `POST /api/v1/projects/{id}/evaluations` or `scripts/evaluate-deck.py`; LLM / VLM judges are optional.
 
 ```bash
@@ -121,6 +125,8 @@ npm run test:engine
 npm run test:web
 npm run build
 uv run --locked --extra dev python scripts/verify-benchmarks.py
+uv run --locked --extra dev python scripts/update-doc-stats.py --check
+uv run --locked python scripts/verify-office-roundtrip.py --mode compare --install-reference
 ```
 
 ## Agent integration

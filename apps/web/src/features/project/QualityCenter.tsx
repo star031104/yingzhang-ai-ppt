@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import type { QualityReport } from "../../api";
 import { EvaluationPanel } from "./EvaluationPanel";
+import { RehearsalPanel } from "./RehearsalPanel";
 
 const VISION_STATUS: Record<string, string> = { "not-configured": "未配置视觉模型", unavailable: "视觉模型不可用", checked: "视觉模型已复核" };
 
@@ -82,6 +83,7 @@ export function QualityCenter({ report, projectId, slides, onJumpToSlide }: {
         <p className="quality-next"><b>优先优化：</b>{audit.recommendations[0].title} · {audit.recommendations[0].detail}</p>
       ) : <p className={`quality-next${ready ? " pass" : ""}`}>{ready ? "已通过当前自动检查，交付前请预览完整演示" : "检查尚未全部通过，请完成页面生成并处理待修复问题"}</p>}
       {projectId && <EvaluationPanel projectId={projectId} slides={slides} onJumpToSlide={onJumpToSlide} />}
+      {projectId && <RehearsalPanel projectId={projectId} onJumpToSlide={onJumpToSlide} />}
     </div>
   );
 }

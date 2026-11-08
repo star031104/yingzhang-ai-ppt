@@ -66,7 +66,7 @@ export const planProject = (
   count: number,
   skill_ids: string[] = [],
   approval_mode = false,
-  image_mode: "off" | "auto" = "off",
+  image_mode: "off" | "auto" | "creative" = "off",
   brief: ProfessionalBrief = {},
 ) =>
   json(`/projects/${projectId}/outline`, {
@@ -92,7 +92,7 @@ export const startOutlineJob = (
   count: number,
   skill_ids: string[] = [],
   approval_mode = false,
-  image_mode: "off" | "auto" = "off",
+  image_mode: "off" | "auto" | "creative" = "off",
   brief: ProfessionalBrief = {},
 ) =>
   json<ProjectJob>(`/projects/${projectId}/jobs/outline`, {
@@ -117,7 +117,7 @@ export const startFullGenerationJob = (
   preset: string,
   count: number,
   skill_ids: string[] = [],
-  image_mode: "off" | "auto" = "off",
+  image_mode: "off" | "auto" | "creative" = "off",
   brief: ProfessionalBrief = {},
 ) =>
   json<ProjectJob>(`/projects/${projectId}/jobs/full`, {

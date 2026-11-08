@@ -9,8 +9,8 @@ New-Item -ItemType Directory -Force -Path $shareRoot | Out-Null
 Set-Location -LiteralPath $projectRoot
 
 # The public tunnel must never inherit the unauthenticated local mode.
-$env:SLIDEFORGE_PUBLIC_TEST_MODE = 'true'
-$env:SLIDEFORGE_PRIVATE_ACCOUNTS_MODE = 'false'
+$env:YINGZHANG_PUBLIC_TEST_MODE = 'true'
+$env:YINGZHANG_PRIVATE_ACCOUNTS_MODE = 'false'
 $pythonPath = Join-Path $projectRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $pythonPath)) { $pythonPath = "python" }
 $configurationCheck = & $pythonPath -c "from app.config import settings; from app.security.public_access import validate_public_config; validate_public_config(); assert settings.public_test_mode and not settings.private_accounts_mode; print('ok')" 2>&1

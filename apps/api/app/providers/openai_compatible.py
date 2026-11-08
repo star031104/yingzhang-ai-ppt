@@ -399,21 +399,26 @@ class OpenAICompatibleClient:
         images: list[bytes],
         max_tokens: int = 2400,
     ) -> str:
-        content = [{"type": "text", "text": prompt}]
-        content.extend(
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{base64.b64encode(image).decode('ascii')}",
-                    "detail": "high",
-                },
-            }
-            for image in images
-        )
         return await self.chat_completion(
             model,
-            [{"role": "user", "content": content}],
+            vision_messages(prompt, images),
             temperature=0.1,
             max_tokens=max_tokens,
             json_mode=True,
         )
+
+
+def vision_messages(prompt: str, images: list[bytes]) -> list[dict]:
+    """One user turn with the prompt followed by PNG screenshots (OpenAI image_url form)."""
+    content: list[dict] = [{"type": "text", "text": prompt}]
+    content.extend(
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/png;base64,{base64.b64encode(image).decode('ascii')}",
+                "detail": "high",
+            },
+        }
+        for image in images
+    )
+    return [{"role": "user", "content": content}]

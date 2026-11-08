@@ -14,6 +14,7 @@ from app.api.governance_routes import router as governance_router
 from app.api.personal_experience_routes import router as experience_router
 from app.api.personal_quality_routes import router as personal_quality_router
 from app.api.personalization_routes import router as personalization_router
+from app.api.presenter_routes import router as presenter_router
 from app.api.project_workspace_routes import router as project_workspace_router
 from app.api.quality_routes import router as quality_router
 from app.api.routes import router
@@ -104,6 +105,7 @@ app.include_router(slide_router)
 app.include_router(skill_router)
 app.include_router(source_router)
 app.include_router(workflow_router)
+app.include_router(presenter_router)
 app.include_router(public_access_router)
 app.middleware("http")(public_access_middleware)
 app.add_middleware(RequestBodyLimitMiddleware)

@@ -50,14 +50,16 @@
 - 解析 PDF、DOCX、XLSX/CSV、PPTX、Markdown、HTML、图片
 - 保留章节层级、表格行列、单位、图注与来源定位
 - BM25 + 可选向量检索（RRF 融合），长文不再只读开头
-- 扫描件可接本机 Tesseract OCR，结果标记待核对
+- 扫描件可接本机 Tesseract OCR，或本机解析模型 MinerU / PaddleOCR-VL（公式、复杂表格）
+- 资料卡 → 原子事实 → 检索块三层知识库，检索得分沿标题树传播
 
 </td>
 <td width="50%" valign="top">
 
 **规划与生成**
 
-- 按受众、目标、时长、语气规划叙事，15 类演示契约
+- 按受众、目标、时长、语气规划叙事，15 类演示契约；可选 **引导模式**（策略 → 内容 → 结构 → 设计 → 生成）
+- 模型输出优先严格 JSON Schema，失败时带校验错误修复一次，并按模型统计一次通过率
 - 每页声明角色、主张、证据、文字预算与对象上限
 - 模型提议经校验：数字白名单、标题去重、页序与角色
 - 9 套视觉技能，`tokens.json` 声明网格、字号阶梯与装饰语法
@@ -70,6 +72,7 @@
 **编辑与协作**
 
 - 多候选并排比较，人工选择会被锁定，不被后台覆盖
+- 逐页“渲染 → 检查 → 修补”闭环（有轮数上限），整套稿共享风格契约
 - 对象级对话修改、**框选局部修改**、单页重新生成
 - 页面版本、审阅意见、审批与发布快照
 - 本地个人助手：从参考稿和确认过的修改中学习偏好
@@ -83,6 +86,8 @@
 - 8 类原生图表（柱、条、折线、面积、环形、散点、组合、瀑布）
 - 参考 PPTX 版式库与企业母版填充，转场与入场动画
 - 演讲备注合成 **讲解视频**（TTS 配音 + MP4 + SRT 字幕）
+- `$$LaTeX$$` 公式：网页用 MathML 显示，PPTX 导出为 **原生可编辑公式**
+- **排练模式**：按时长分配每页时间、计时练习，并给出答案只来自材料的预测提问
 
 </td>
 </tr>
@@ -165,13 +170,14 @@ uv run --locked python -m uvicorn app.main:app --app-dir apps/api --host 127.0.0
 
 ## 使用流程
 
-1. **新建演示**：填写主题、受众、沟通目标、时长与风格。
+1. **新建演示**：填写主题、受众、沟通目标、时长与风格；勾选“引导模式”可按五步确认受众、必讲事实、页数与生成方式，每题都有根据材料给出的建议答案。可选“创意封面与章节页”生成海报风格背景。
 2. **上传材料**：核对读取结果，确认关键章节、数字、表格和限制条件。
 3. **配置模型**：填写兼容 OpenAI 的服务地址、API Key 与模型，先做连接测试。
 4. **确认大纲与样张**：审阅页面顺序与每页任务，确认代表页风格。
 5. **生成与挑选**：全稿生成后在工作台选择候选、对象级或框选修改。
 6. **质量检查**：处理内容遗漏、溢出、对比度、来源或许可问题。
-7. **导出交付**：在 PowerPoint、WPS 或 LibreOffice 中复核后正式使用。
+7. **排练**：在质量中心生成排练卡，按每页时间预算计时练习，准备预测提问。
+8. **导出交付**：在 PowerPoint、WPS 或 LibreOffice 中复核后正式使用。
 
 ## 质量与评测
 
@@ -179,14 +185,20 @@ uv run --locked python -m uvicorn app.main:app --app-dir apps/api --host 127.0.0
 
 | 检查项 | 当前结果 |
 | --- | --- |
-| Python 测试（API、工作流、解析、MCP、视频） | 300 项通过 |
-| 演示引擎测试 | 61 项通过 |
-| 前端组件测试 | 25 项通过 |
+| Python 测试（API、工作流、解析、评测、MCP、视频） | <!-- stats:python -->350<!-- /stats --> 项通过 |
+| 演示引擎测试 | <!-- stats:engine -->63<!-- /stats --> 项通过 |
+| 前端组件测试 | <!-- stats:web -->27<!-- /stats --> 项通过 |
 | Ruff · 前端生产构建 · 基准门禁 | 通过 |
-| PPTX 跨格式保真度（LibreOffice 渲染 vs HTML 截图，四类基准平均） | **98.7 – 99.5**（旧导出器 81.6 – 86.9） |
+| PPTX 跨格式保真度（LibreOffice 渲染 vs HTML 截图，四类基准平均） | **99.4 – 99.6**（开源 dom-to-pptx 96.2 – 97.3，旧导出器 81.7 – 87.2） |
+| 主张出处回查（四类基准，逐条主张对照原文） | 1.00 |
+| 质量门禁扰动测试（注入 13 类缺陷，门禁命中率） | 1.00 |
+| 参考模板基准（合成企业母版：语法学习 · 版式路由 · 母版保真） | 通过 |
 
 - **PPTEval 三维评分**（内容 / 设计 / 连贯，1–5 分）与 **问答保真度**（只凭页面文字回答源材料问题）。
-- **渲染复查**：导出的 PPTX 经 LibreOffice 渲染后与所选 HTML 候选逐页比对。
+- **渲染复查**：导出的 PPTX 经 LibreOffice 渲染后与所选 HTML 候选逐页比对；`--mode compare` 同时对比独立开源实现 dom-to-pptx。
+- **出处回查**：逐条主张检索原文，数字、单位与“不含、试点”等限定条件必须一致；可选模型只复核不确定的主张，且不能豁免缺失的数字。
+- **编辑漂移**：回放页面版本历史，统计人工编辑是否越界修改、人工改过的文案和选定版式是否被后续自动步骤覆盖。
+- **扰动测试**：向干净的演示注入改动数字、编造结论、重复标题、断开来源、文字溢出、低对比度等缺陷，要求对应门禁全部命中。
 - 评测入口：`POST /api/v1/projects/{id}/evaluations` 或 `scripts/evaluate-deck.py`，可选接入 LLM / VLM 评委。
 - 基准材料全部为合成或可再分发内容，见 [benchmarks/](benchmarks/README.md)。
 
@@ -196,6 +208,8 @@ npm run test:engine                              # 演示引擎
 npm run test:web                                 # 前端组件
 npm run build                                    # 生产构建
 uv run --locked --extra dev python scripts/verify-benchmarks.py
+uv run --locked --extra dev python scripts/update-doc-stats.py --check   # 文档中的测试数量
+uv run --locked python scripts/verify-office-roundtrip.py --mode compare --install-reference
 ```
 
 ## Agent 集成
@@ -241,6 +255,12 @@ claude mcp add yingzhang -e YINGZHANG_API_URL=http://127.0.0.1:8000 \
 | `YINGZHANG_FFMPEG` | 自动发现 | 讲解视频使用的 ffmpeg |
 | `YINGZHANG_TTS_VOICE` / `YINGZHANG_TTS_FORMAT` | `alloy` / `mp3` | 讲解视频配音音色与格式（需为 `tts` 角色配置模型） |
 | `YINGZHANG_PRIVATE_ACCOUNTS_MODE` | `false` | 独立账号模式，本地单用户保持关闭 |
+| `YINGZHANG_PAGE_REPAIR_ROUNDS` | `2` | 逐页自动修版的最大轮数，`0` 关闭 |
+| `YINGZHANG_PAGE_VISION_REPAIR` | `auto` | 已配置视觉评审模型时逐页看截图复查；`off` 只用规则 |
+| `YINGZHANG_PPTX_EQUATIONS` | `native` | 公式导出为原生公式；`linear` 导出为可读文本 |
+| `YINGZHANG_DOCUMENT_PARSER` | `builtin` | PDF 解析后端：`mineru`、`paddleocr-vl` 或 `command` |
+| `YINGZHANG_DOCUMENT_PARSER_POLICY` | `auto` | 仅在扫描页、公式或复杂表格时调用外部解析；`always` 全部调用 |
+| `YINGZHANG_DOCUMENT_PARSER_COMMAND` | 预设 | 自定义解析命令，`{input}`/`{output}` 会被替换 |
 
 </details>
 
@@ -278,8 +298,10 @@ claude mcp add yingzhang -e YINGZHANG_API_URL=http://127.0.0.1:8000 \
 ## 当前边界
 
 - 跨格式保真度在 LibreOffice 上测得；PowerPoint 与 WPS 的字体替换、换行和媒体表现仍需在目标环境人工验收。
-- 扫描 PDF 依赖本机 OCR，数字与表格需要人工核对。
-- 复杂公式、特殊图表与第三方字体可能需要手动调整。
+- 扫描 PDF 依赖本机 OCR 或本机解析模型，数字与表格需要人工核对。
+- 原生公式只支持常用 LaTeX 子集；LibreOffice 24.x 会同时显示公式对象与回退文本。
+- 创意海报背景是图片，在 PowerPoint 中不可编辑，只用于封面、章节与问答页。
+- 特殊图表与第三方字体可能需要手动调整。
 - 来源绑定能减少编造，但不能替代人工核实；网络图片的版权与肖像授权由使用者最终确认。
 - 当前为 0.x 版本，接口与数据结构仍可能调整。
 

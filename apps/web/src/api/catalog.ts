@@ -99,3 +99,15 @@ export async function removeSkill(id: string) {
 }
 export const getModelRouting = () =>
   json<{ role: string; model_config_id: string }[]>("/model-routing");
+
+export interface StructuredOutputStat {
+  model: string;
+  calls: number;
+  paths: Record<"strict" | "json-mode" | "repaired" | "regex-fallback" | "failed", number>;
+  firstTryRate: number;
+  failureRate: number;
+  schemaUnsupported: boolean;
+  lastErrors: string[];
+}
+export const getStructuredOutputStats = () =>
+  json<{ models: StructuredOutputStat[] }>("/model-diagnostics/structured-output");

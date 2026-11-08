@@ -426,6 +426,13 @@ export function ProjectEditor({
             {tab === "edit" && (
               <div className="slide-editor">
                 <SlideProposalNote slide={current} />
+                {current?.creativePage && <p className="field-help creative-note">创意页：{current.creativePage.notice}</p>}
+                {!!current?.renderRepair?.rounds && (
+                  <p className="field-help repair-note">
+                    已自动修版 {current.renderRepair.rounds} 轮（{current.renderRepair.final === "pass" ? "已通过版面检查" : "仍需人工检查"}）：
+                    {current.renderRepair.history.flatMap((round) => round.actions.map((item) => ({ "move-bullets-to-notes": `${item.count} 条要点移入讲稿`, "shorten-bullets": `${item.count} 条要点精简（全文在讲稿）`, "steer-layouts": "换用更宽松的版式", "drop-missing-assets": "移除丢失的图片" }[item.action] ?? item.action))).join("；")}
+                  </p>
+                )}
                 {data.previewAvailable && (
                   <button type="button" className="region-callout" onClick={() => setRegionToolRequest((value) => value + 1)}>
                     <span><Icon name="select" size={16} /></span>

@@ -143,3 +143,20 @@ test('assembly rejects stale candidates after an edit',async t=>{
  slide.content.bullets=['修改后内容'];await fs.writeFile(input,JSON.stringify([slide]))
  await assert.rejects(main(['assemble',input,root]),/重新生成/)
 })
+
+test('formula bullets count as shown when the text around the formula is visible',async()=>{
+ const {missingContent}=await import('../src/content.mjs')
+ const spec={content:{bullets:['总损失为 $$L=\\frac{1}{N}$$ 的均方形式','缺失的一条']}}
+ const scene={visibleText:'总损失为 L=1N 的均方形式',structuredContent:[]}
+ const missing=missingContent(scene,spec)
+ assert.deepEqual(missing.map(item=>item.index),[1])
+})
+
+test('MathML from the API is injected and keeps LaTeX for the PPTX compiler',async()=>{
+ const {slideHtml}=await import('../src/author.mjs')
+ const html=slideHtml({position:1,role:'content',content:{title:'公式',bullets:['能量 $$E=mc^2$$ 守恒']},
+  math:[{latex:'E=mc^2',mathml:'<math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mi>E</mi></math>'},
+        {latex:'x',mathml:'<math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><script>alert(1)</script></math>'}]},'split')
+ assert.match(html,/<span class="yz-math" data-pptx-text="\$\$E=mc\^2\$\$"><math/)
+ assert.doesNotMatch(html,/<script>alert/)
+})

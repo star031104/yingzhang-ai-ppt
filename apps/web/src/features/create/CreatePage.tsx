@@ -162,7 +162,21 @@ export function CreatePage({
                 <small>只生成与主题直接相关的真实场景或科学画面；数据、架构和实验页仍使用可编辑图表或原文图片。</small>
               </span>
             </label>
+            <label className="check image-option">
+              <input type="checkbox" name="creativePages" value="1" />
+              <span>
+                <b>创意封面与章节页（海报风格）</b>
+                <small>为封面、章节页和问答页生成全幅海报背景（最多 4 页）。背景在 PowerPoint 中是图片、不可编辑，标题仍是可编辑文字；数据与证据页不受影响。需要配置生图模型。</small>
+              </span>
+            </label>
           </details>
+          <label className="check guided-option">
+            <input type="checkbox" name="guided" value="1" />
+            <span>
+              <b>先回答 5 个关键问题（引导模式）</b>
+              <small>上传材料后，按“策略 → 内容 → 结构 → 设计 → 生成”确认受众、必讲事实、页数与生成方式；每题都有根据材料给出的建议答案。</small>
+            </span>
+          </label>
           <div className="create-submit">
             <div className="builtin-note"><b>内置专业流程</b><span>材料解析 · 策略记忆 · 三页一组创作 · 一致性复核 · 事实与视觉质检</span></div>
             <button className="primary btn-lg" disabled={busy}>

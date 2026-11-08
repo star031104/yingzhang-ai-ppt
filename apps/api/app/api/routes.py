@@ -1,3 +1,4 @@
+import hashlib
 import json
 import uuid
 from pathlib import Path
@@ -65,9 +66,14 @@ ROLE_REQUIREMENTS = {
 }
 
 
+# Launchers identify their own server through /health instead of socket owner PIDs,
+# which some Windows installs report as 0. Only a hash of the project path is exposed.
+INSTANCE_ID = hashlib.sha256(str(Path(__file__).resolve().parents[4]).lower().encode("utf-8")).hexdigest().upper()
+
+
 @router.get("/health")
 def health():
-    return {"status": "ok", "phase": 1}
+    return {"status": "ok", "phase": 1, "instance": INSTANCE_ID}
 
 
 @router.post("/projects", response_model=ProjectOut, status_code=201)
@@ -335,6 +341,29 @@ async def test_image_model(model_id: str, db: Session = Depends(get_db)):
         raise HTTPException(502, f"生图模型测试失败：{exc}") from exc
     media_type = "image/jpeg" if data.startswith(b"\xff\xd8\xff") else "image/png"
     return Response(content=data, media_type=media_type)
+
+
+@router.get("/document-parser")
+def document_parser_status():
+    """Configured local PDF parser (built-in, MinerU, PaddleOCR-VL or a custom command)."""
+    from app.documents.backends import availability
+
+    return availability()
+
+
+@router.get("/model-diagnostics/structured-output")
+def structured_output_diagnostics():
+    """Per-model structured-output paths: strict schema, repair turn, regex fallback, failure."""
+    from app.providers.structured import structured_ledger
+
+    return {"models": structured_ledger.summary()}
+
+
+@router.delete("/model-diagnostics/structured-output", status_code=204)
+def reset_structured_output_diagnostics():
+    from app.providers.structured import structured_ledger
+
+    structured_ledger.reset()
 
 
 @router.get("/model-routing")
