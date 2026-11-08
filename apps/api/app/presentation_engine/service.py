@@ -59,6 +59,12 @@ class PresentationEngine:
 
     def _run(self, command: str, slides: list[dict], output: Path, *, scene_root: Path | None = None) -> None:
         output.parent.mkdir(parents=True, exist_ok=True)
+        if command != "pdf" and any("$$" in json.dumps(slide.get("content") or {}, ensure_ascii=False) for slide in slides):
+            from app.documents.latex_math import attach_slide_math
+
+            slides = copy.deepcopy(slides)
+            for slide in slides:
+                attach_slide_math(slide)
         spec_path = output.parent / "slides.input.json"
         spec_path.write_text(json.dumps(slides, ensure_ascii=False, indent=2), encoding="utf-8")
         arguments = ["node", str(self.cli), command, str(spec_path), str(output)]
@@ -75,8 +81,29 @@ class PresentationEngine:
         )
         if result.returncode:
             raise EngineError(result.stderr.strip() or result.stdout.strip())
+        if command == "pptx" and output.is_file():
+            self._native_equations(output)
         if command == "build" and any(slide.get("personalizationBaseline") for slide in slides):
             self._compare_personal_style(slides, output)
+
+    def _native_equations(self, output: Path) -> None:
+        """Replace ``$$…$$`` formula text with native PowerPoint equations (OMML)."""
+        from app.config import settings
+        from app.powerpoint.equations import inject_native_equations
+
+        try:
+            mode = "linear" if str(settings.pptx_equations).lower() == "linear" else "native"
+            result = inject_native_equations(output, mode)
+        except (OSError, ValueError, KeyError) as exc:
+            result = {"equations": 0, "error": str(exc)[:200]}
+        report_path = export_report_path(output)
+        if result.get("equations") or result.get("error"):
+            try:
+                report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.is_file() else {}
+            except (OSError, ValueError):
+                report = {}
+            report["nativeEquations"] = result
+            report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _compare_personal_style(self, slides, output):
         from app.validation.render_safety import safe_render_candidate

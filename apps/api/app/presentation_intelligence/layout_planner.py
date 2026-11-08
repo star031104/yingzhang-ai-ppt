@@ -52,6 +52,7 @@ VARIANT_SILHOUETTES = {
     "figure-analysis": "image-analysis",
     "figure-focus": "image-focus",
     "image-story": "image-split",
+    "creative-poster": "poster",
     "media-focus": "media-wide",
 }
 

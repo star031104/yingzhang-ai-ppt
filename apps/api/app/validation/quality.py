@@ -447,15 +447,16 @@ def validate_deck(slides: list[dict], sources: list[dict]) -> dict:
             })
         title_key = re.sub(r"[^\w\u4e00-\u9fff]", "", title).lower()
         if (
-            len(slides) >= 12
-            and title_key
+            title_key
             and title_key in seen_titles
             and slide.get("role") not in {"agenda", "section", "questions"}
         ):
+            # Found by the gate perturbation suite: short decks used to skip this
+            # check entirely. Long decks block on it; short decks get a warning.
             issues.append({
                 "slide": position,
                 "code": "duplicate-slide-title",
-                "severity": "error",
+                "severity": "error" if len(slides) >= 12 else "warning",
                 "firstSlide": seen_titles[title_key],
                 "message": f"与第 {seen_titles[title_key]} 页标题重复",
             })

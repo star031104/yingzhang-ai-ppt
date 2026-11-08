@@ -514,6 +514,44 @@ def _extract_markdown_tables(name: str, sections: list, tables: list) -> None:
         section["text"] = "\n".join(output)
 
 
+def _maybe_external_pdf(name: str, data: bytes, sections: list, tables: list, warnings: list) -> tuple[list, list, list]:
+    """Re-parse a PDF with the configured local VLM parser when the built-in result is weak.
+
+    Figures from the built-in pass are kept (they carry extracted asset files); text
+    sections and Markdown tables come from the external parser. Any failure keeps the
+    built-in result and records why.
+    """
+    from app.documents import backends
+
+    reason = backends.trigger_reason(warnings, "\n".join(section.get("text", "") for section in sections))
+    if not reason:
+        return sections, tables, warnings
+    try:
+        result = backends.run_external_parser(name, data, reason)
+    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        warnings.append({"code": "external-parser-failed", "message": f"本机解析模型未能处理该文件，已保留内置解析结果：{str(exc)[:200]}"})
+        return sections, tables, warnings
+    parsed = _parse_text_sections(name, result.markdown)
+    for section in parsed:
+        section["page"] = backends.page_for(section.get("title", ""), section.get("text", ""), result.page_map)
+    external_tables: list = []
+    _extract_markdown_tables(name, parsed, external_tables)
+    if not external_tables:
+        first = parsed[0]["id"] if parsed else None
+        for table in tables:
+            owner = next((item for item in parsed if item.get("page") and item.get("page") == table.get("page")), None)
+            table["section"] = owner["id"] if owner else first
+        external_tables = tables
+    kept = [item for item in warnings if item.get("code") not in backends.AUTO_TRIGGER_WARNINGS]
+    formulas = len(re.findall(r"\$\$[^$]+\$\$", result.markdown))
+    kept.append({
+        "code": "external-parser",
+        "message": f"已使用本机解析模型 {result.backend} 重新识别（原因：{result.reason}）；识别出 {formulas} 个公式、{len(external_tables)} 张表格，请核对数字",
+        "backend": result.backend,
+    })
+    return parsed, external_tables, kept
+
+
 def parse_source(
     name: str,
     data: bytes,
@@ -585,6 +623,7 @@ def parse_source(
             if captions and not detected:
                 warnings.append({"code": "table-text-only", "page": index, "message": "发现表题，但无法可靠恢复行列关系；保留原文，不猜测单元格"})
         pdf.close()
+        sections, tables, warnings = _maybe_external_pdf(name, data, sections, tables, warnings)
     elif suffix == ".docx":
         sections, figures, tables = parse_docx_structure(name, data, asset_dir)
     elif suffix in {".xlsx", ".xlsm"}:

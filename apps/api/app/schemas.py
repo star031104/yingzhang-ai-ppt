@@ -95,7 +95,7 @@ class JobCreate(BaseModel):
 
 
 JobStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
-PageStatus = Literal["pending", "running", "ready", "failed", "cancelled"]
+PageStatus = Literal["pending", "running", "repairing", "ready", "failed", "cancelled"]
 
 
 class PageGenerationState(BaseModel):

@@ -7,7 +7,7 @@ from app.db.session import get_db
 from app.documents.review import source_reading_view
 from app.security.public_fetch import PublicFetchError, fetch_public_bytes
 from app.security.uploads import read_upload_limited
-from app.sources import safe_upload_name, store_source
+from app.sources import load_sources, safe_upload_name, store_source
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, HttpUrl
 from sqlalchemy import select
@@ -80,3 +80,15 @@ def source_review(project_id: str, db: Session = Depends(get_db)):
         source_reading_view(row)
         for row in db.scalars(select(SourceDocument).where(SourceDocument.project_id == project_id))
     ]
+
+
+@router.get("/projects/{project_id}/knowledge")
+def project_knowledge_base(project_id: str, db: Session = Depends(get_db)):
+    """Three-level knowledge base (card → facts → chunks) of the project's materials."""
+    from app.intelligence.knowledge_base import build_knowledge_base
+
+    project_or_404(project_id, db)
+    sources = load_sources(project_id, db)
+    if not sources:
+        raise HTTPException(409, "请先上传材料")
+    return build_knowledge_base(sources)

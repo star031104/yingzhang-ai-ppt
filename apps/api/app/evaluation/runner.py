@@ -5,12 +5,14 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from app.evaluation.edit_drift import history_drift
+from app.evaluation.faithfulness import evaluate_faithfulness
 from app.evaluation.ppteval import evaluate_ppteval
 from app.evaluation.quiz import evaluate_quiz
 from app.evaluation.render_review import render_pptx, review_rendered_pptx
 
 RESEARCH_SUITE = "research-v1"
-KINDS = ("ppteval", "quiz", "render")
+KINDS = ("ppteval", "quiz", "render", "faithfulness", "drift")
 EVALUATION_TIMEOUT_SECONDS = 600.0
 RUNNING_STALE_AFTER = timedelta(minutes=20)
 
@@ -37,6 +39,7 @@ async def run_evaluations(
     vision_judge=None,
     renderer=render_pptx,
     max_questions: int = 18,
+    versions: list[dict] | None = None,
 ) -> dict:
     """Run the requested evaluators. Each one degrades to deterministic rules on its own."""
     kinds = [kind for kind in KINDS if kind in kinds]
@@ -63,6 +66,10 @@ async def run_evaluations(
         results["quiz"] = await evaluate_quiz(
             slides, sources, judge=text_judge, max_detail=detail, max_concept=max(2, max_questions - detail),
         )
+    if "faithfulness" in kinds:
+        results["faithfulness"] = await evaluate_faithfulness(slides, sources, judge=text_judge)
+    if "drift" in kinds:
+        results["drift"] = history_drift(versions or [])
     results["summary"] = summarize(results)
     return results
 
@@ -85,6 +92,21 @@ def summarize(results: dict) -> dict:
             "detailRetention": quiz.get("detailRetention"),
             "conceptRetention": quiz.get("conceptRetention"),
             "quizStatus": quiz.get("status"),
+        })
+    faithfulness = results.get("faithfulness")
+    if faithfulness:
+        summary.update({
+            "faithfulness": faithfulness.get("faithfulness"),
+            "strictFaithfulness": faithfulness.get("strictFaithfulness"),
+            "figureClaimAlignment": faithfulness.get("figureClaimAlignment"),
+            "unsupportedClaims": (faithfulness.get("counts") or {}).get("unsupported"),
+        })
+    drift = results.get("drift")
+    if drift:
+        summary.update({
+            "editTurns": drift.get("turns"),
+            "driftRate": drift.get("driftRate"),
+            "editPersistence": drift.get("persistence"),
         })
     render = results.get("render")
     if render:

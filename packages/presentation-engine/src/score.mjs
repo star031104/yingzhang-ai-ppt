@@ -19,7 +19,7 @@ const VARIANT_FAMILIES={
  'comparison-bars':'chart','two-column':'comparison',scorecard:'metrics',
  'finding-cards':'cards',ablation:'chart',takeaways:'list','summary-grid':'cards','next-steps':'timeline',
  'minimal-qa':'minimal','closing-statement':'typography',contact:'contact',split:'split',statement:'typography',cards:'cards',
- 'figure-wide':'image-wide','figure-analysis':'image-analysis','figure-focus':'image-focus','image-story':'image-split','media-focus':'media',
+ 'creative-poster':'poster','figure-wide':'image-wide','figure-analysis':'image-analysis','figure-focus':'image-focus','image-story':'image-split','media-focus':'media',
 }
 
 export const variantFamily=variant=>VARIANT_FAMILIES[variant]??variant??'unspecified'
@@ -68,6 +68,7 @@ function contentFitScore(spec,variant){
  if(resolveComposition(spec,variant)==='evidence-brief')return 95
  const items=spec.content?.bullets??[],metrics=metricCount(items),pairs=pairCount(items),count=items.length
  const hasAsset=(spec.assetBindings??[]).some(item=>item.path||item.dataUri)
+ if(variant==='creative-poster')return hasAsset&&['cover','section','questions'].includes(spec.role)?96:10
  if(variant.startsWith('figure-')||variant==='image-story')return hasAsset?100:20
  if(variant==='media-focus')return (spec.assetBindings??[]).some(item=>['licensed-video','licensed-audio'].includes(item.type))?100:20
  if(variant==='metric-wall'||variant==='scorecard')return metrics>=3?100:metrics===2?84:metrics===1?62:24

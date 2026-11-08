@@ -194,10 +194,12 @@
   background: rgba(20, 21, 26, 0.72);
   color: #fff;
 }
-.page-job-item.running {
+.page-job-item.running,
+.page-job-item.repairing {
   box-shadow: 0 0 0 1.5px var(--accent);
 }
-.page-job-item.running span {
+.page-job-item.running span,
+.page-job-item.repairing span {
   color: var(--accent-text);
 }
 .page-job-item.failed {

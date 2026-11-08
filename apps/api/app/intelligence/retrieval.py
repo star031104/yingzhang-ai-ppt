@@ -59,6 +59,7 @@ def _chunks(sources: list[dict], size: int = 1800) -> list[dict]:
                     chunks.append({
                         "document": source["name"], "section": section["id"],
                         "title": section.get("title", "正文"), "page": section.get("page"),
+                        "headingPath": list(section.get("headingPath") or []),
                         "text": " ".join(bucket), "part": part,
                         "order": (source_index, section_index, part),
                         "sourceHash": source.get("sha256") or source["name"],
@@ -72,6 +73,7 @@ def _chunks(sources: list[dict], size: int = 1800) -> list[dict]:
                 chunks.append({
                     "document": source["name"], "section": section["id"],
                     "title": section.get("title", "正文"), "page": section.get("page"),
+                    "headingPath": list(section.get("headingPath") or []),
                     "text": " ".join(bucket), "part": part,
                     "order": (source_index, section_index, part),
                     "sourceHash": source.get("sha256") or source["name"],
@@ -87,6 +89,52 @@ def retrieval_query(title: str, preset: str, instructions: str) -> str:
     return f"{title} {instructions} {DOMAIN_TERMS.get(preset, '')}"
 
 
+PARENT_WEIGHT = 0.3
+CHILD_WEIGHT = 0.2
+
+
+def propagate_tree_scores(chunks: list[dict], relevance: list[float]) -> list[float]:
+    """Share relevance along the heading tree (DeepSlide-style score propagation).
+
+    A passage under a highly relevant heading is more likely to matter, and a heading
+    whose children match is itself relevant. Each section receives
+    ``own + 0.3 * nearest-ancestor + 0.2 * best-direct-child`` (section relevance is
+    the best of its chunks). Documents without heading paths are unchanged.
+    """
+    if not chunks or not any(chunk.get("headingPath") for chunk in chunks):
+        return list(relevance)
+    section_best: dict[tuple, float] = {}
+    for chunk, value in zip(chunks, relevance, strict=True):
+        path = tuple(chunk.get("headingPath") or [])
+        if not path:
+            continue
+        key = (chunk["document"], path)
+        section_best[key] = max(section_best.get(key, 0.0), value)
+    child_best: dict[tuple, float] = {}
+    for (document, path), value in section_best.items():
+        if len(path) > 1:
+            parent = (document, path[:-1])
+            child_best[parent] = max(child_best.get(parent, 0.0), value)
+
+    def ancestor_value(document: str, path: tuple) -> float:
+        for depth in range(len(path) - 1, 0, -1):
+            value = section_best.get((document, path[:depth]))
+            if value is not None:
+                return value
+        return 0.0
+
+    propagated = []
+    for chunk, value in zip(chunks, relevance, strict=True):
+        path = tuple(chunk.get("headingPath") or [])
+        if not path:
+            propagated.append(value)
+            continue
+        bonus = PARENT_WEIGHT * ancestor_value(chunk["document"], path) + CHILD_WEIGHT * child_best.get((chunk["document"], path), 0.0)
+        chunk["treeBonus"] = round(bonus, 4)
+        propagated.append(value + bonus)
+    return propagated
+
+
 def rank_chunks(chunks: list[dict], query: str, dense: list[float] | None = None) -> list[dict]:
     """Score chunks in place (BM25 ⊕ dense via RRF, then structural boosts) and rank them."""
     total = len(chunks)
@@ -98,7 +146,7 @@ def rank_chunks(chunks: list[dict], query: str, dense: list[float] | None = None
     rankings = [[item for item in rank_order(lexical) if lexical[item] > 0]]
     if dense and len(dense) == total:
         rankings.append([item for item in rank_order(dense) if dense[item] > 0])
-    fused = reciprocal_rank_fusion(rankings, total)
+    fused = propagate_tree_scores(chunks, reciprocal_rank_fusion(rankings, total))
     top = max(fused) or 1.0
     for position, chunk in enumerate(chunks):
         haystack = f"{chunk['title']} {chunk['text']}".lower()

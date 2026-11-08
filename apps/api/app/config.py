@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     public_upload_limit_mb: int = 25
     trusted_proxy_ips: str = ""
     render_concurrency: int = 2
+    # Per-page render -> check -> patch loop (0 disables automatic page repair).
+    page_repair_rounds: int = Field(default=2, ge=0, le=4)
+    # "auto" asks the routed vision critic about pages that already pass the
+    # deterministic gates; "off" keeps per-page repair purely rule based.
+    page_vision_repair: str = "auto"
     max_concurrent_jobs: int = Field(default=2, ge=1, le=16)
     max_queued_jobs: int = Field(default=6, ge=0, le=64)
     local_only_mode: bool = False
@@ -53,6 +58,17 @@ class Settings(BaseSettings):
     ocr_max_pages: int = 20
     sqlite_busy_timeout_ms: int = Field(default=15000, ge=1000, le=120000)
     ffmpeg: str | None = None
+    # "native": $$LaTeX$$ in slides becomes editable PowerPoint equations (OMML);
+    # "linear": readable Unicode text for viewers without Office equation support.
+    pptx_equations: str = "native"
+    # Optional local document parser for PDFs: "builtin", "mineru", "paddleocr-vl" or "command".
+    document_parser: str = "builtin"
+    # When to call the external parser: "auto" (scanned pages, formulas or unrecoverable
+    # tables in the built-in result) or "always".
+    document_parser_policy: str = "auto"
+    # Command template for the external parser; {input} and {output} are substituted.
+    document_parser_command: str | None = None
+    document_parser_timeout_seconds: int = Field(default=900, ge=30, le=7200)
     tts_voice: str = "alloy"
     tts_format: str = "mp3"
 

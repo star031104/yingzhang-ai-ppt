@@ -4,6 +4,7 @@ import type { ProjectJob } from "../api";
 const STATUS_LABEL = {
   pending: "等待",
   running: "生成中",
+  repairing: "自动修版",
   ready: "完成",
   failed: "失败",
   cancelled: "已取消",
@@ -34,7 +35,7 @@ export function JobPageProgress({ job }: { job: ProjectJob }) {
             {page.status === "ready" && (
               <img src={jobPagePreviewUrl(job.id, page.slideId)} alt={`第 ${page.position} 页预览`} />
             )}
-            {page.status === "running" && <span className="page-job-shimmer" aria-hidden="true" />}
+            {(page.status === "running" || page.status === "repairing") && <span className="page-job-shimmer" aria-hidden="true" />}
             <b>{String(page.position).padStart(2, "0")}</b>
             <span>{STATUS_LABEL[page.status]}</span>
           </div>

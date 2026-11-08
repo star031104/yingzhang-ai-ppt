@@ -15,6 +15,8 @@ from app.db.models import (
     ExportRecord,
     ImportedDeck,
     PersonalBinding,
+    SlideSpecRecord,
+    SlideVersion,
 )
 from app.db.session import get_db
 from app.evaluation import build_evaluation_metrics
@@ -188,7 +190,7 @@ def validate(project_id: str, db: Session = Depends(get_db)):
 
 
 class EvaluationRequest(BaseModel):
-    kinds: list[Literal["ppteval", "quiz", "render"]] = Field(default_factory=list, max_length=3)
+    kinds: list[Literal["ppteval", "quiz", "render", "faithfulness", "drift"]] = Field(default_factory=list, max_length=5)
     use_models: bool = True
     max_questions: int = Field(default=18, ge=4, le=40)
 
@@ -219,6 +221,21 @@ def _latest_pptx(project_id: str, db: Session, deck_fingerprint: str) -> tuple[P
     return None, False
 
 
+def _version_history(project_id: str, db: Session) -> list[dict]:
+    rows = db.execute(
+        select(SlideVersion, SlideSpecRecord.position)
+        .join(SlideSpecRecord, SlideSpecRecord.id == SlideVersion.slide_id)
+        .where(SlideSpecRecord.project_id == project_id)
+        .order_by(SlideVersion.slide_id, SlideVersion.version)
+    )
+    return [
+        {"slideId": version.slide_id, "position": position, "version": version.version,
+         "reason": version.reason, "spec": version.spec,
+         "createdAt": version.created_at.isoformat() if version.created_at else None}
+        for version, position in rows
+    ]
+
+
 async def run_research_evaluation(project_id: str, body: EvaluationRequest, db: Session):
     """PPTEval / PaperQuiz / render review. Read-only analysis, bounded by a timeout."""
     project = project_or_404(project_id, db)
@@ -228,6 +245,7 @@ async def run_research_evaluation(project_id: str, body: EvaluationRequest, db: 
     quality = validate(project_id, db) if "ppteval" in body.kinds else {}
     pptx, export_current = _latest_pptx(project_id, db, deck_fingerprint)
     text_judge, vision_judge = resolve_judges(db) if body.use_models else (None, None)
+    versions = _version_history(project_id, db) if "drift" in body.kinds else None
     row = EvaluationRun(project_id=project_id, suite=RESEARCH_SUITE, status="running", metrics={
         "kinds": list(dict.fromkeys(body.kinds)), "fingerprint": fingerprint,
         "exportMatchesCurrent": export_current if pptx else None,
@@ -242,6 +260,7 @@ async def run_research_evaluation(project_id: str, body: EvaluationRequest, db: 
         results = await asyncio.wait_for(run_evaluations(
             body.kinds, slides=slides, sources=sources, quality_report=quality, output_root=output_root,
             pptx=pptx, text_judge=text_judge, vision_judge=vision_judge, max_questions=body.max_questions,
+            versions=versions,
         ), EVALUATION_TIMEOUT_SECONDS)
         row.metrics = {**row.metrics, **results}
         row.status = "completed"

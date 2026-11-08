@@ -231,6 +231,9 @@ def edit_slide(project_id: str, slide_id: str, body: EditRequest, db: Session = 
     for key, value in body.patch.items():
         if key in allowed:
             spec[key] = value
+    if {"message", "content"} & set(body.patch):
+        # Automatic page repair may restyle this page but never trims human-edited copy.
+        spec["contentLocked"] = True
     row.current_version += 1
     row.spec = spec
     record_feedback(db, row, before_spec, "patch", body.instruction)
@@ -302,6 +305,8 @@ def _commit_object_edit(
     *, instruction: str, reason: str, target: dict, change_set: dict, rerender: bool,
 ):
     """Persist one user edit as a new slide version and optionally re-render the page."""
+    if spec.get("content") != before_spec.get("content") or spec.get("message") != before_spec.get("message"):
+        spec["contentLocked"] = True
     row.current_version += 1
     row.spec = spec
     actor = (current_user(request) or {}).get("name", "本机管理员")
